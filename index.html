@@ -4025,16 +4025,12 @@ function mostrarPanelEvaluacionSeguro(event) {
     return false;
   }
 
-  // Mostrar el panel de forma forzada para evitar que otra regla de estilo
-  // o una navegación anterior lo deje oculto.
   if (fila) {
     fila.style.display = 'block';
     fila.style.visibility = 'visible';
     fila.style.opacity = '1';
   }
-  if (practica) {
-    practica.style.setProperty('display', 'none', 'important');
-  }
+  if (practica) practica.style.setProperty('display', 'none', 'important');
   evaluacion.hidden = false;
   evaluacion.removeAttribute('hidden');
   evaluacion.style.setProperty('display', 'flex', 'important');
@@ -4047,7 +4043,10 @@ function mostrarPanelEvaluacionSeguro(event) {
   const selector = document.getElementById('select-evaluacion');
   if (selector) {
     selector.disabled = false;
-    setTimeout(() => selector.focus(), 50);
+    setTimeout(() => {
+      selector.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      selector.focus({ preventScroll: true });
+    }, 80);
   }
   return false;
 }
@@ -4076,6 +4075,8 @@ function seleccionarModo(modo) {
     actualizarResumenEvaluacionPanel();
     if(btnP) btnP.classList.remove('activo');
     if(btnE) btnE.classList.add('activo');
+    const selector=document.getElementById('select-evaluacion');
+    if(selector) setTimeout(()=>selector.scrollIntoView({behavior:'smooth',block:'center'}),80);
   } else {
     evaluacion.style.setProperty('display','none','important');
     practica.style.setProperty('display','flex','important');
@@ -4083,6 +4084,8 @@ function seleccionarModo(modo) {
     practica.style.opacity='1';
     if(btnE) btnE.classList.remove('activo');
     if(btnP) btnP.classList.add('activo');
+    const selector=document.getElementById('select-practica');
+    if(selector) setTimeout(()=>selector.scrollIntoView({behavior:'smooth',block:'center'}),80);
   }
   return false;
 }
@@ -6161,16 +6164,45 @@ window.mostrarRegistroEstudiante=window.mostrarPresentarse;
 
 window.abrirFormularioDesdeDocente=async function(){
   if(!foroEsDocente()){alert('🔒 Solo el docente puede entrar al Formulario.');return false;}
-  prepararFormularioForo('docente');
-  const modal=document.getElementById('modal-docente');if(modal)modal.style.display='none';
+
+  /* Navegación consolidada: el formulario docente se abre como una vista
+     completa del panel derecho, igual que el Foro. No depende de la vista
+     que estuviera abierta anteriormente. */
+  const modal=document.getElementById('modal-docente');
+  if(modal)modal.style.display='none';
+
+  const main=document.querySelector('.main-container');
+  const content=document.querySelector('main.content');
+  const zona=document.querySelector('.zona-estudiante');
+  const fila=document.querySelector('.fila-modos-aprendizaje');
+  document.querySelectorAll('.main-container>.tema').forEach(x=>{
+    x.style.display='none';
+    x.style.visibility='hidden';
+    x.classList.remove('tema-activo-etapa1');
+  });
+  if(content)content.style.display='none';
+  if(zona)zona.style.display='none';
+  if(fila)fila.style.display='none';
+  if(main)main.style.display='flex';
+
   const r=document.getElementById('tema-registroEstudiante');
-  document.querySelectorAll('.tema').forEach(x=>x.style.display='none');
-  if(!r)return false;
-  r.style.display='block';
+  if(!r){alert('❌ No se encontró el Formulario del docente.');return false;}
+
+  prepararFormularioForo('docente');
+  r.classList.add('tema-activo-etapa1');
+  r.style.setProperty('display','flex','important');
+  r.style.visibility='visible';
+  r.style.opacity='1';
+  r.style.flexDirection='column';
+
   const nm=document.getElementById('reg-nombres'),ap=document.getElementById('reg-apellidos');
   if(nm){nm.readOnly=true;nm.value=DOC_FORO_NOMBRE;}
   if(ap){ap.readOnly=true;ap.value=DOC_FORO_APELLIDOS;}
-  const estado=document.getElementById('foro-estado-guardado-formulario');if(estado)estado.style.display='none';
+
+  const estado=document.getElementById('foro-estado-guardado-formulario');
+  if(estado)estado.style.display='none';
+
+  /* Carga la presentación docente existente para poder editarla. */
   await cargarPublicacionEnFormulario('',DOC_FORO_ID);
   r.scrollIntoView({behavior:'smooth',block:'start'});
   return false;
@@ -9714,15 +9746,6 @@ body.inicio-sin-accesos .controls .btn-practica-top[onclick*="abrirAccesoDocente
     document.querySelectorAll('.tema').forEach(t=>{if(t.id!=='tema-notaDocente')t.style.display='none'});
     if(sec){sec.style.display='block';sec.style.visibility='visible';cargarNotasEstudianteFirebase();sec.scrollIntoView({behavior:'smooth',block:'start'})}
   };
-
-  /* ---------- botones de navegación: click/teclado y Enter en chat ---------- */
-  document.addEventListener('keydown',e=>{
-    if(e.key==='Enter'&&!e.shiftKey){
-      const id=e.target?.id;
-      if(id==='chat-texto-estudiante'){e.preventDefault();window.enviarChatEstudiante()}
-      if(id==='chat-texto-docente'){e.preventDefault();window.enviarChatDocente()}
-    }
-  });
 
   setInterval(()=>{
     if(document.hidden)return;
