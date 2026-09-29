@@ -3394,47 +3394,27 @@
       }
     }
 
-    // ===== ACTIVIDADES: UNA SOLA NOTA POR TEMA =====
-    // Reemplaza la nota anterior únicamente cuando el nuevo intento es mejor.
-    // Nunca suma 4 + 5; conserva solo 5.
+    // ===== RESULTADOS DE ACTIVIDADES =====
+    // Cada intento se guarda en Firebase para que el docente pueda ver
+    // también la actividad más reciente, aunque la nota sea igual o menor.
+    // El progreso del estudiante conserva por separado su mejor nota por tema.
     async function guardarMejorResultadoPorTema(obj) {
       try {
         if(!window.db || !obj || !obj.estudiante) return false;
         const estudiante=String(obj.estudiante).trim();
         const tema=String(obj.tema || obj.categoria || '').trim();
-        const snap=await window.db.collection('resultados').where('estudiante','==',estudiante).get();
-        const coincidencias=[];
-        snap.forEach(doc=>{
-          const d=doc.data()||{};
-          const tipo=String(d.tipo||'').toLowerCase();
-          const temaDoc=String(d.tema||d.categoria||'').trim();
-          if((tipo==='practica'||tipo==='actividad2') && temaDoc.toLowerCase()===tema.toLowerCase()){
-            coincidencias.push({ref:doc.ref,data:d});
-          }
-        });
-        const notaNueva=Number(obj.nota ?? obj.puntos ?? 0);
-        let mejor=null;
-        coincidencias.forEach(x=>{
-          const n=Number(x.data.nota ?? x.data.puntos ?? 0);
-          if(!mejor || n>mejor.nota) mejor={...x,nota:n};
-        });
-        if(mejor && mejor.nota >= notaNueva){
-          for(const x of coincidencias){
-            if(x.ref.id!==mejor.ref.id){ try{await x.ref.delete();}catch(e){} }
-          }
-          return true;
-        }
-        if(mejor){
-          await mejor.ref.set({...obj,estudiante,nombre:estudiante,tema,tipo:'practica'},{merge:true});
-          for(const x of coincidencias){
-            if(x.ref.id!==mejor.ref.id){ try{await x.ref.delete();}catch(e){} }
-          }
-          return true;
-        }
-        await window.db.collection('resultados').add({...obj,estudiante,nombre:estudiante,tema});
+        const registro={
+          ...obj,
+          estudiante,
+          nombre:estudiante,
+          tema,
+          fechaISO:obj.fechaISO || new Date().toISOString(),
+          intentoId:obj.intentoId || (Date.now()+'_'+Math.random().toString(36).slice(2))
+        };
+        await window.db.collection('resultados').add(registro);
         return true;
       }catch(e){
-        console.error('No se pudo guardar la mejor nota por tema:',e);
+        console.error('No se pudo guardar el resultado de la actividad en Firebase:',e);
         return false;
       }
     }
@@ -3902,9 +3882,13 @@
 
         const audio = item.pasado ? `${item.ingles}, ${item.pasado}` : item.ingles;
 
+        const enunciadoVisible = categoria === 'abecedario'
+          ? ''
+          : ` <strong>"${obtenerEnunciadoPractica(item, categoria)}"</strong>`;
+
         cardPregunta.innerHTML = `
           <div class="enunciado-linea">
-            <span>${textoPregunta} <strong>"${obtenerEnunciadoPractica(item, categoria)}"</strong></span>
+            <span>${textoPregunta}${enunciadoVisible}</span>
             <span class="circulo-negro" onclick="hablar('${audio.replace(/'/g, "\\'")}')" title="Escuchar pronunciación">🔴</span>
           </div>
           <div class="opciones-grupo" id="opciones-${prefix}-${index}">
@@ -4142,6 +4126,8 @@ function obtenerTextoPreguntaEvaluacion(item) {
   const categoria=String(item?.__categoriaFuente||evaluacionActual?.categoria||'').trim();
   // En Abecedario evaluamos la escucha: no mostramos la letra en la pregunta.
   if(categoria==='abecedario') return '🔊 Escucha el sonido y selecciona la letra correcta.';
+  // En Pronombres Personales no mostramos el pronombre en español; se identifica por audio.
+  if(categoria==='pronombresPersonales') return '🔊 Escucha el pronombre y selecciona la opción correcta en inglés.';
   // En Días de la semana NO mostramos el día en español: el estudiante debe escucharlo.
   if(categoria==='dias') return '🔊 Escucha el día y selecciona cómo se dice en inglés.';
   // En Evaluación de colores tampoco mostramos el símbolo coloreado ni el nombre en español:
@@ -6344,6 +6330,22 @@ async function guardarPublicacionForo(modo){
 }
 window.guardarRegistroEstudiante=function(){return guardarPublicacionForo(FORO_FORM_MODO);};
 
+
+/* Selector de idioma del Foro: utiliza el contenido ES/EN ya generado
+   para cada publicación y vuelve a renderizar sin crear otra implementación. */
+window.cambiarIdiomaForo=async function(idioma){
+  const lang=String(idioma||'en').toLowerCase()==='es'?'es':'en';
+  try{localStorage.setItem('FORO_IDIOMA',lang);}catch(e){}
+  const bes=document.getElementById('foro-btn-es');
+  const ben=document.getElementById('foro-btn-en');
+  if(bes)bes.classList.toggle('activo',lang==='es');
+  if(ben)ben.classList.toggle('activo',lang==='en');
+  await renderForo();
+  const f=document.getElementById('tema-foroPresentacion');
+  if(f)f.scrollIntoView({behavior:'smooth',block:'start'});
+  return false;
+};
+
 async function renderForo(){
   const pub=document.getElementById('foro-publicado');if(!pub)return;
 
@@ -7513,7 +7515,7 @@ document.addEventListener('DOMContentLoaded', function(){
     }catch(e){console.error(e);box.innerHTML='<p>⚠️ No se pudieron cargar los resultados de Firebase. Revisa las reglas de Firestore.</p>';return;}
     lista.sort((a,b)=>String(b.fechaISO||'').localeCompare(String(a.fechaISO||'')));
     const estudiantes=[...new Set(lista.map(x=>x.estudiante||x.nombre).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
-    box.innerHTML=`<div class="filtro-resultados-docente"><select id="filtro-estudiante-resultados"><option value="">Todos los estudiantes</option>${estudiantes.map(x=>`<option value="${safe(x)}">${safe(x)}</option>`).join('')}</select><select id="filtro-tipo-resultados"><option value="">Todos los resultados</option><option value="evaluacion1">Evaluación 1</option><option value="actividad2">Evaluación 2 / Actividad</option></select><button type="button" class="btn-docente-principal" onclick="renderTablaResultadosDocente()">🔄 Actualizar</button></div><div id="tabla-resultados-docente"></div>`;
+    box.innerHTML=`<div class="filtro-resultados-docente"><select id="filtro-estudiante-resultados"><option value="">Todos los estudiantes</option>${estudiantes.map(x=>`<option value="${safe(x)}">${safe(x)}</option>`).join('')}</select><select id="filtro-tipo-resultados"><option value="">Todos los resultados</option><option value="evaluacion1">Evaluación 1</option><option value="actividad2">Evaluación 2 / Actividad</option><option value="practica">Práctica Jugando</option></select><button type="button" class="btn-docente-principal" onclick="mostrarResultadosActividadesDocente()">🔄 Actualizar</button></div><div id="tabla-resultados-docente"></div>`;
     window.__resultadosDocente=lista;renderTablaResultadosDocente();
   };
   window.renderTablaResultadosDocente=function(){
