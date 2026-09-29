@@ -4289,7 +4289,7 @@ function guardarRespuestaEvaluacion() {
   return false;
 }
 
-function finalizarEvaluacion() {
+async function finalizarEvaluacion() {
   const preguntas = Array.isArray(evaluacionActual?.preguntas) ? evaluacionActual.preguntas : [];
   if (!preguntas.length) {
     alert('⚠️ No hay preguntas cargadas para finalizar.');
