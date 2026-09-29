@@ -4289,7 +4289,7 @@ function guardarRespuestaEvaluacion() {
   return false;
 }
 
-function finalizarEvaluacion() {
+async function finalizarEvaluacion() {
   const preguntas = Array.isArray(evaluacionActual?.preguntas) ? evaluacionActual.preguntas : [];
   if (!preguntas.length) {
     alert('⚠️ No hay preguntas cargadas para finalizar.');
@@ -4327,7 +4327,7 @@ function finalizarEvaluacion() {
 
   // Guardar antes de mostrar el resultado para que el progreso, colores,
   // historial y diplomas queden actualizados inmediatamente.
-  guardarResultadoEvaluacionHistorial(
+  await guardarResultadoEvaluacionHistorial(
     evaluacionActual.categoria,
     correctas,
     total,
@@ -5052,13 +5052,15 @@ function obtenerCertificadosPorPuntos(puntos) {
   return METAS_DIPLOMAS.map((meta,i)=>({meta,titulo:DIPLOMAS_NIVEL_1?.[i]?.titulo || `Diploma ${i+1}`}));
 }
 
-function guardarResultadoEvaluacionHistorial(categoria, correctas, total, porcentaje, nota, errores) {
-  const data = obtenerProgresoGuardado();
+async function guardarResultadoEvaluacionHistorial(categoria, correctas, total, porcentaje, nota, errores) {
+  const nombre = obtenerNombreEstudiante();
+  if (!nombre) return false;
+
   const ahora = Date.now();
-  data.evaluaciones = Array.isArray(data.evaluaciones) ? data.evaluaciones : [];
-  data.evaluaciones.unshift({
+  const fecha = new Date(ahora).toLocaleString('es-CO', {dateStyle:'short', timeStyle:'short'});
+  const evaluacion = {
     id: ahora,
-    fecha: new Date(ahora).toLocaleString('es-CO', {dateStyle:'short', timeStyle:'short'}),
+    fecha,
     categoria,
     tema: categoria === 'general' ? 'Evaluación General' : (nombresTemas[categoria] || categoria),
     correctas,
@@ -5066,10 +5068,8 @@ function guardarResultadoEvaluacionHistorial(categoria, correctas, total, porcen
     porcentaje,
     nota,
     aprobada: evaluacionAprobada({porcentaje, nota})
-  });
-  data.evaluaciones = data.evaluaciones.slice(0, 30);
-
-  data.errores = (errores || []).slice(0, 20).map((e, i) => ({
+  };
+  const erroresLimpios = (errores || []).slice(0, 20).map((e, i) => ({
     id: ahora + i,
     tema: e.tema,
     categoria: e.categoria,
@@ -5078,7 +5078,55 @@ function guardarResultadoEvaluacionHistorial(categoria, correctas, total, porcen
     respuesta: e.respuesta
   }));
 
+  // Conservamos el guardado local para no romper el funcionamiento actual.
+  const data = obtenerProgresoGuardado();
+  data.evaluaciones = Array.isArray(data.evaluaciones) ? data.evaluaciones : [];
+  data.evaluaciones.unshift(evaluacion);
+  data.evaluaciones = data.evaluaciones.slice(0, 30);
+  data.errores = erroresLimpios;
   guardarProgresoGuardado(data);
+
+  // NUEVO: copia permanente en Firebase para que la evaluación pueda verse
+  // desde cualquier computador/dispositivo, no solamente desde el navegador
+  // donde fue presentada.
+  if (!db) {
+    console.warn('Firebase no está disponible; la evaluación quedó solo en este dispositivo.');
+    return false;
+  }
+
+  try {
+    const snap = await db.collection('estudiantes').get();
+    let estudianteDoc = null;
+    snap.forEach(doc => {
+      if (estudianteDoc) return;
+      const d = doc.data() || {};
+      const n = extraerNombreEstudiante(doc);
+      if (nombreNormalizado(n) === nombreNormalizado(nombre)) {
+        estudianteDoc = doc;
+      }
+    });
+
+    if (!estudianteDoc) {
+      console.error('No se encontró el estudiante en Firebase para guardar la evaluación:', nombre);
+      alert('⚠️ La evaluación terminó, pero no se encontró el estudiante en Firebase. La nota quedó guardada en este dispositivo.');
+      return false;
+    }
+
+    await estudianteDoc.ref.collection('evaluaciones').doc(String(ahora)).set({
+      ...evaluacion,
+      estudiante: estudianteDoc.id,
+      nombreEstudiante: nombre,
+      errores: erroresLimpios,
+      origen: 'evaluacion_web'
+    });
+
+    console.log('✅ Evaluación guardada en Firebase:', nombre, evaluacion);
+    return true;
+  } catch (error) {
+    console.error('❌ Error guardando evaluación en Firebase:', error);
+    alert('⚠️ La evaluación terminó, pero no pudo sincronizarse con Firebase. La nota quedó guardada en este dispositivo.');
+    return false;
+  }
 }
 
 function calcularPromedioNotas(evaluaciones) {
@@ -5512,7 +5560,53 @@ window.mostrarInsigniasPractica=mostrarInsigniasPractica;
 window.reclamarInsigniaPractica=reclamarInsigniaPractica;
 window.descargarInsigniaPractica=descargarInsigniaPractica;
 
-function mostrarPanelProgresoPractica(){
+// Sincroniza únicamente las evaluaciones desde Firebase hacia la caché local.
+// Las actividades de práctica y sus puntos siguen funcionando como antes.
+async function sincronizarEvaluacionesDesdeFirebase(nombre) {
+  nombre = String(nombre || '').trim();
+  if (!nombre || !db) return false;
+
+  try {
+    const snap = await db.collection('estudiantes').get();
+    let estudianteDoc = null;
+    snap.forEach(doc => {
+      if (estudianteDoc) return;
+      const d = doc.data() || {};
+      const n = extraerNombreEstudiante(doc);
+      if (nombreNormalizado(n) === nombreNormalizado(nombre)) estudianteDoc = doc;
+    });
+
+    if (!estudianteDoc) return false;
+
+    const evaluacionesSnap = await estudianteDoc.ref.collection('evaluaciones').get();
+    const data = obtenerProgresoDelEstudiante(nombre) || {evaluaciones: [], errores: []};
+    const locales = Array.isArray(data.evaluaciones) ? data.evaluaciones : [];
+    const mapa = new Map();
+
+    locales.forEach(e => {
+      if (e && e.id != null) mapa.set(String(e.id), e);
+    });
+
+    evaluacionesSnap.forEach(doc => {
+      const e = doc.data() || {};
+      if (e.id == null) e.id = Number(doc.id) || Date.now();
+      mapa.set(String(e.id), e);
+    });
+
+    data.evaluaciones = Array.from(mapa.values())
+      .sort((a,b) => Number(b.id || 0) - Number(a.id || 0))
+      .slice(0, 100);
+
+    guardarProgresoDelEstudiante(nombre, data);
+    return true;
+  } catch (error) {
+    console.warn('No fue posible sincronizar las evaluaciones desde Firebase:', error);
+    return false;
+  }
+}
+window.sincronizarEvaluacionesDesdeFirebase = sincronizarEvaluacionesDesdeFirebase;
+
+async function mostrarPanelProgresoPractica(){
   const contenedor = document.getElementById('contenedor-tarjetas');
   const titulo = document.getElementById('titulo-tema');
   const main = document.querySelector('main.content');
@@ -5542,6 +5636,10 @@ function mostrarPanelProgresoPractica(){
     contenedor.innerHTML=`<section class="progreso-hero"><h1>🎮 Progreso de práctica</h1><p>Primero entra como estudiante para consultar tus actividades.</p><button type="button" class="btn-iniciar-evaluacion" onclick="irAccesoEstudiante()">👨‍🎓 Entrar como estudiante</button></section>`;
     window.scrollTo({top:0,behavior:'smooth'}); return;
   }
+
+  // Antes de pintar el progreso, traemos las evaluaciones guardadas en la nube.
+  // Así el estudiante puede ver desde otro computador lo que presentó en línea.
+  await sincronizarEvaluacionesDesdeFirebase(nombre);
 
   const data = obtenerProgresoGuardado() || {evaluaciones:[]};
   const {realizadas,puntos} = resumenPracticaSeparada(data.evaluaciones);
