@@ -14016,5 +14016,227 @@ body.vista-chat-solo #btn-estudiante-superior,body.vista-chat-solo #estudiante-a
 })();
 </script>
 
+
+<!-- FIX FINAL: PROGRESO DE EVALUACIÓN DESDE FIREBASE 2026-09-29 -->
+<script id="fix-progreso-evaluacion-firebase-2026">
+(function(){
+  'use strict';
+
+  function normalizar(v){
+    return String(v==null?'':v).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ');
+  }
+
+  function esc(v){
+    try{return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+    catch(e){return '';}
+  }
+
+  function categoriaDesdeTema(tema){
+    var t=normalizar(tema);
+    if(!t) return '';
+    var mapa=(typeof window.nombresTemas==='object'&&window.nombresTemas)?window.nombresTemas:null;
+    try{
+      if(mapa){
+        var keys=Object.keys(mapa);
+        for(var i=0;i<keys.length;i++){
+          if(normalizar(mapa[keys[i]])===t) return keys[i];
+        }
+      }
+    }catch(e){}
+    return '';
+  }
+
+  function esEvaluacionFirebase(d){
+    var tipo=normalizar(d && d.tipo);
+    var evaluacion=normalizar(d && d.evaluacion);
+    return tipo==='evaluacion1' || evaluacion==='evaluacion 1';
+  }
+
+  function convertirResultadoFirebase(doc){
+    var d=doc && typeof doc.data==='function' ? (doc.data()||{}) : (doc||{});
+    var categoria=String(d.categoria||'').trim() || categoriaDesdeTema(d.tema);
+    var pct=Number(d.porcentaje);
+    if(!Number.isFinite(pct)){
+      var r=String(d.resultado||'').match(/(\d+(?:\.\d+)?)\s*\/?\s*100/);
+      pct=r?Number(r[1]):0;
+    }
+    pct=Math.max(0,Math.min(100,pct));
+    var nota=Number(d.nota);
+    if(!Number.isFinite(nota) || nota<=0) nota=Math.round((pct/100)*5*10)/10;
+    var fechaISO=String(d.fechaISO||'');
+    var id=Date.parse(fechaISO);
+    if(!Number.isFinite(id)) id=Date.now();
+    return {
+      id:id,
+      fecha:d.fecha || (fechaISO ? new Date(id).toLocaleString('es-CO',{dateStyle:'short',timeStyle:'short'}) : ''),
+      fechaISO:fechaISO,
+      categoria:categoria,
+      tema:d.tema || (categoria && window.nombresTemas ? window.nombresTemas[categoria] : categoria),
+      correctas:Number(d.correctas||0),
+      total:Number(d.total||0),
+      porcentaje:pct,
+      puntos:Number(d.puntos ?? pct),
+      nota:nota,
+      aprobada:nota>=3,
+      tipo:'evaluacion1',
+      evaluacion:'Evaluación 1',
+      _firebaseId:doc && doc.id ? doc.id : ''
+    };
+  }
+
+  async function obtenerEvaluacionesFirebase(nombre){
+    var db=window.db;
+    if(!db || typeof db.collection!=='function' || !nombre) return [];
+    var snap=null;
+    try{
+      // Primero usamos el nombre exacto, que es el mismo campo que se guarda al presentar.
+      snap=await db.collection('resultados').where('estudiante','==',nombre).get();
+    }catch(e){
+      console.warn('Consulta exacta de resultados Firebase no disponible:',e);
+    }
+    // Compatibilidad con registros antiguos que tengan el nombre en otro campo o distinta escritura.
+    if(!snap || snap.empty){
+      try{ snap=await db.collection('resultados').where('nombre','==',nombre).get(); }catch(e){ console.warn('Consulta por nombre no disponible:',e); }
+    }
+    var salida=[];
+    if(snap && !snap.empty){
+      snap.forEach(function(doc){
+        var d=doc.data()||{};
+        var persona=d.estudiante||d.nombre||'';
+        if(normalizar(persona)!==normalizar(nombre)) return;
+        if(!esEvaluacionFirebase(d)) return;
+        var item=convertirResultadoFirebase(doc);
+        if(item.categoria) salida.push(item);
+      });
+    }
+    return salida;
+  }
+
+  function combinarEvaluaciones(locales,nube){
+    var arr=[];
+    (Array.isArray(locales)?locales:[]).forEach(function(e){
+      if(!e) return;
+      var tipo=normalizar(e.tipo);
+      if(tipo==='practica' || tipo==='actividad2') return;
+      arr.push(Object.assign({},e));
+    });
+    // Firebase es la fuente principal para las evaluaciones porque permite verlas desde otro equipo.
+    (Array.isArray(nube)?nube:[]).forEach(function(e){
+      if(!e || !e.categoria) return;
+      arr.push(e);
+    });
+
+    // Una sola evaluación visible por tema: se conserva el registro más reciente.
+    var porTema={};
+    arr.forEach(function(e){
+      var cat=String(e.categoria||'').trim();
+      if(!cat || cat==='general') return;
+      var fecha=Number(e.id||0);
+      if(!Number.isFinite(fecha)) fecha=0;
+      var ant=porTema[cat];
+      var fechaAnt=ant?Number(ant.id||0):0;
+      if(!ant || fecha>=fechaAnt) porTema[cat]=e;
+    });
+    return Object.values(porTema);
+  }
+
+  // Evita que una misma Evaluación 1 vuelva a crear documentos duplicados.
+  // Si ya existe un resultado del mismo estudiante + tema, se actualiza ese documento.
+  var viejoGuardar=window.guardarEvaluacion1Firebase;
+  window.guardarEvaluacion1Firebase=async function(categoria,correctas,total,porcentaje,nota){
+    var nombre='';
+    try{nombre=String(typeof window.obtenerNombreEstudiante==='function'?window.obtenerNombreEstudiante():'').trim();}catch(e){}
+    var db=window.db;
+    var tema='';
+    try{tema=typeof window.temaNombre==='function'?window.temaNombre(categoria):((window.nombresTemas||{})[categoria]||categoria);}catch(e){tema=categoria;}
+    var obj={
+      estudiante:nombre,nombre:nombre,
+      actividad:'Evaluación 1 — Evaluación tradicional',
+      tema:tema, categoria:categoria,
+      resultado:String(porcentaje)+'/100', puntos:porcentaje, nota:nota, porcentaje:porcentaje,
+      correctas:correctas,total:total,
+      fecha:(typeof window.fecha==='function'?window.fecha():new Date().toLocaleString('es-CO')),
+      fechaISO:new Date().toISOString(),
+      evaluacion:'Evaluación 1',tipo:'evaluacion1'
+    };
+    if(!db || typeof db.collection!=='function'){
+      try{return viejoGuardar?await viejoGuardar(categoria,correctas,total,porcentaje,nota):false;}catch(e){return false;}
+    }
+    try{
+      var snap=await db.collection('resultados').where('estudiante','==',nombre).get();
+      var existente=null;
+      if(snap && !snap.empty){
+        snap.forEach(function(doc){
+          var d=doc.data()||{};
+          if(!existente && esEvaluacionFirebase(d) && normalizar(d.tema)===normalizar(tema)) existente=doc;
+        });
+      }
+      if(existente){
+        await existente.ref.set(obj,{merge:true});
+        return true;
+      }
+      await db.collection('resultados').add(obj);
+      return true;
+    }catch(e){
+      console.error('No se pudo guardar la Evaluación 1 sin duplicarla:',e);
+      return false;
+    }
+  };
+
+  // Reemplazamos la última versión de la pantalla de progreso por una versión asíncrona
+  // que consulta Firebase. La vista y los colores actuales se conservan.
+  window.mostrarPanelProgreso=async function(){
+    var cont=document.getElementById('contenedor-tarjetas');
+    if(!cont) return false;
+    var nombre='';
+    try{nombre=String(typeof window.obtenerNombreEstudiante==='function'?window.obtenerNombreEstudiante():'').trim();}catch(e){}
+    var main=document.querySelector('main.content');
+    if(main){main.style.display='flex';main.classList.remove('inicio-bienvenida');}
+    document.querySelectorAll('.tema').forEach(function(el){el.style.display='none';});
+    var zona=document.querySelector('.zona-estudiante');if(zona)zona.style.display='none';
+    var fila=document.querySelector('.fila-modos-aprendizaje');if(fila)fila.style.display='none';
+    var dip=document.getElementById('tema-misDiplomas');if(dip)dip.style.display='none';
+    var foro=document.getElementById('tema-foroPresentacion');if(foro)foro.style.display='none';
+    cont.style.display='block';cont.style.visibility='visible';cont.style.opacity='1';
+    cont.className='panel-dashboard progreso-vista-completa';
+    if(!nombre){
+      cont.innerHTML='<section class="progreso-hero"><h1>📝 Progreso de evaluación</h1><p>Primero entra como estudiante.</p><button type="button" class="btn-iniciar-evaluacion" onclick="irAccesoEstudiante()">👨‍🎓 Entrar como estudiante</button></section>';
+      return false;
+    }
+
+    cont.innerHTML='<section class="progreso-hero"><h1>📝 Progreso de evaluación</h1><p><strong>'+esc(nombre)+'</strong>, estamos consultando tus evaluaciones guardadas...</p></section>';
+
+    var local={evaluaciones:[]};
+    try{local=typeof window.obtenerProgresoGuardado==='function'?(window.obtenerProgresoGuardado()||local):local;}catch(e){}
+    var locales=Array.isArray(local.evaluaciones)?local.evaluaciones:[];
+    var nube=[];
+    try{nube=await obtenerEvaluacionesFirebase(nombre);}catch(e){console.error('No se pudieron consultar las evaluaciones de Firebase:',e);}
+    var ev=combinarEvaluaciones(locales,nube);
+    var temas=(typeof window.nombresTemas==='object'&&window.nombresTemas)?window.nombresTemas:{};
+    var porTema={};
+    ev.forEach(function(e){if(e&&e.categoria&&e.categoria!=='general')porTema[e.categoria]=e;});
+    function safe(v){return esc(v);}
+    var keys=Object.keys(temas);
+    var rows=keys.map(function(cat){
+      var e=porTema[cat];
+      if(!e)return '<div class="estado-tema-row pendiente"><div class="estado-tema-nombre"><strong>'+safe(temas[cat])+'</strong></div><div class="estado-tema-datos"><div class="estado-tema-barra"><span style="width:0%"></span></div><div class="estado-tema-estado">⏳ Falta</div></div><div class="estado-tema-nota">Pendiente</div></div>';
+      var pct=Math.max(0,Math.min(100,Number(e.porcentaje||0)));
+      var ok=false;try{ok=typeof window.evaluacionAprobada==='function'?window.evaluacionAprobada(e):Number(e.nota||0)>=3;}catch(x){ok=Number(e.nota||0)>=3;}
+      return '<div class="estado-tema-row '+(ok?'aprobada':'reprobada')+'"><div class="estado-tema-nombre"><strong>'+safe(temas[cat])+'</strong></div><div class="estado-tema-datos"><div class="estado-tema-barra"><span style="width:'+pct+'%"></span></div><div class="estado-tema-estado">'+(ok?'🔵 Aprobada':'🔴 No aprobada')+' · '+safe(e.fecha||'')+'</div></div><div class="estado-tema-nota">'+Number(e.nota||0).toFixed(1)+' / 5</div></div>';
+    }).join('');
+    var realizadas=Object.values(porTema);
+    var ganadas=realizadas.filter(function(e){try{return typeof window.evaluacionAprobada==='function'?window.evaluacionAprobada(e):Number(e.nota||0)>=3;}catch(x){return Number(e.nota||0)>=3;}}).length;
+    var perdidas=realizadas.length-ganadas;
+    var puntosDiplomas=0;
+    try{puntosDiplomas=typeof window.calcularPuntosDesdeHistorial==='function'?window.calcularPuntosDesdeHistorial(ev):0;}catch(x){puntosDiplomas=0;}
+    cont.innerHTML='<section class="progreso-hero"><h1>📝 Progreso de evaluación</h1><p><strong>'+safe(nombre)+'</strong>, este panel muestra únicamente tus evaluaciones.</p><div style="margin:14px 0 20px;text-align:left;"><button type="button" class="btn-iniciar-evaluacion btn-regreso-progreso-evaluacion" onclick="return regresarAlMenuEstudiante();">↩️ Regresar al espacio principal del estudiante</button></div><div class="tarjetas-resumen-dashboard progreso-resumen"><div class="tarjeta-dashboard"><span>📝</span><strong>'+keys.length+'</strong><small>Total evaluaciones</small></div><div class="tarjeta-dashboard"><span>🔵</span><strong>'+ganadas+'</strong><small>Aprobadas</small></div><div class="tarjeta-dashboard"><span>🔴</span><strong>'+perdidas+'</strong><small>No aprobadas</small></div><div class="tarjeta-dashboard"><span>⏳</span><strong>'+Math.max(0,keys.length-realizadas.length)+'</strong><small>Pendientes</small></div><div class="tarjeta-dashboard"><span>🏆</span><strong>'+puntosDiplomas+'</strong><small>Puntos para diplomas</small></div></div></section><section class="tarjeta-panel estado-tus-temas"><h2>📊 Estado de las evaluaciones</h2><p>🔵 Azul = aprobada · 🔴 Rojo = no aprobada.</p><div class="estado-temas-lista">'+rows+'</div></section>';
+    cont.scrollIntoView({behavior:'smooth',block:'start'});window.scrollTo({top:0,behavior:'smooth'});
+    return false;
+  };
+
+  window.__progresoEvaluacionFirebase2026=true;
+})();
+</script>
+
 </body>
 </html>
