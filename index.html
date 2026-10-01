@@ -4110,6 +4110,18 @@ function finalizarEvaluacion() {
     errores
   );
 
+  // También registrar la Evaluación 1 en Firebase para que aparezca
+  // inmediatamente en Resultados de actividades del docente.
+  if (typeof window.guardarEvaluacion1Firebase === 'function') {
+    window.guardarEvaluacion1Firebase(
+      evaluacionActual.categoria,
+      correctas,
+      total,
+      porcentaje,
+      nota
+    ).catch(err => console.error('No se pudo registrar Evaluación 1 en Firebase:', err));
+  }
+
   const mensaje = nota === 5 ? '¡Excelente trabajo!' :
                   nota === 4 ? '¡Muy bien!' :
                   nota === 3 ? '¡Buen trabajo, sigue practicando!' :
@@ -6534,6 +6546,7 @@ document.addEventListener('DOMContentLoaded', function(){
     const obj={estudiante:activo(),nombre:activo(),actividad:'Evaluación 1 — Evaluación tradicional',tema:temaNombre(categoria),resultado:`${porcentaje}/100`,puntos:porcentaje,nota,porcentaje,correctas,total,fecha:fecha(),fechaISO:new Date().toISOString(),evaluacion:'Evaluación 1',tipo:'evaluacion1'};
     return guardarFirebaseResultado(obj);
   }
+  window.guardarEvaluacion1Firebase = guardarEvaluacion1Firebase;
 
   // En el archivo base "db" está declarado con let en el script global; hacemos una referencia global.
   // Si el navegador no expone esa variable, se obtiene desde Firebase.apps.
