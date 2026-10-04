@@ -3994,6 +3994,15 @@ function actualizarResumenEvaluacionPanel() {
 
 function mostrarPanelEvaluacionSeguro(event) {
   cerrarPortadaBloqueante();
+  // La portada usa .inicio-bienvenida para ocultar todos los hijos del contenido.
+  // Al entrar directamente a Evaluación debemos quitar esa clase antes de mostrar el panel.
+  const mainEvaluacion = document.querySelector('main.content');
+  if (mainEvaluacion) {
+    mainEvaluacion.classList.remove('inicio-bienvenida');
+    mainEvaluacion.style.display = 'flex';
+    mainEvaluacion.style.visibility = 'visible';
+    mainEvaluacion.style.opacity = '1';
+  }
   if (event) {
     event.preventDefault();
     event.stopPropagation();
@@ -4044,6 +4053,14 @@ window.abrirModoEvaluacion = abrirModoEvaluacion;
 
 function seleccionarModo(modo) {
   cerrarPortadaBloqueante();
+  // Garantizar que el modo seleccionado no quede oculto por la clase de portada.
+  const mainModo = document.querySelector('main.content');
+  if (mainModo) {
+    mainModo.classList.remove('inicio-bienvenida');
+    mainModo.style.display = 'flex';
+    mainModo.style.visibility = 'visible';
+    mainModo.style.opacity = '1';
+  }
   const practica = document.getElementById('panel-practica');
   const evaluacion = document.getElementById('panel-evaluacion');
   const fila = document.querySelector('.fila-modos-aprendizaje');
@@ -10151,69 +10168,18 @@ window.cargarNotasEstudiante=async function(){
   }
 
   async function finalizar(){
-    const nombre=String(nombreEstudiante()||'').trim();
+    const nombre=nombreEstudiante();
     const porcentaje=Math.round(aciertos/banco.length*100);
     const puntos=Math.max(0,Math.min(5,Math.round(porcentaje/20)));
-    const ahora=Date.now();
-    const obj={
-      id:ahora,
-      intentoId:'cuerpo_'+ahora+'_'+Math.random().toString(36).slice(2),
-      estudiante:nombre,
-      nombre,
-      actividad:'Partes del Cuerpo — 10 preguntas — PRÁCTICA JUGANDO',
-      tema:'Partes del Cuerpo Humano',
-      categoria:'cuerpo',
-      resultado:aciertos+'/'+banco.length,
-      puntos,
-      nota:puntos,
-      porcentaje,
-      correctas:aciertos,
-      total:banco.length,
-      fecha:new Date().toLocaleString('es-CO'),
-      fechaISO:new Date().toISOString(),
-      evaluacion:'Práctica Jugando',
-      tipo:'practica',
-      aprobada:puntos>=3
-    };
-    let local=false, nube=false;
-
+    const obj={id:Date.now(),estudiante:nombre,nombre,actividad:'Partes del Cuerpo — 10 preguntas — PRÁCTICA JUGANDO',tema:'Partes del Cuerpo Humano',categoria:'cuerpo',resultado:aciertos+'/'+banco.length,puntos,nota:puntos,porcentaje,correctas:aciertos,total:banco.length,fecha:new Date().toLocaleString('es-CO'),fechaISO:new Date().toISOString(),evaluacion:'Práctica Jugando',tipo:'practica',aprobada:puntos>=3};
+    let nube=false;
     if(nombre){
-      // GUARDADO DIRECTO Y EXCLUSIVO DE ESTA ACTIVIDAD.
-      // No depende de que otra función haya conservado correctamente el estudiante activo.
-      try{
-        const clave=claveDatosEstudiante(nombre);
-        let data={evaluaciones:[],errores:[]};
-        try{data=JSON.parse(localStorage.getItem(clave)||'{}')||{};}catch(e){}
-        data.evaluaciones=Array.isArray(data.evaluaciones)?data.evaluaciones:[];
-        data.errores=Array.isArray(data.errores)?data.errores:[];
-        const idx=data.evaluaciones.findIndex(e=>String(e?.categoria||'').toLowerCase()==='cuerpo' && String(e?.tipo||'').toLowerCase()==='practica');
-        if(idx<0){
-          data.evaluaciones.unshift(obj);
-        }else{
-          const anterior=Number(data.evaluaciones[idx]?.puntos ?? data.evaluaciones[idx]?.nota ?? 0);
-          if(puntos>=anterior)data.evaluaciones[idx]=obj;
-        }
-        data.evaluaciones=data.evaluaciones.slice(0,100);
-        localStorage.setItem(clave,JSON.stringify(data));
-        // Dejamos la sesión activa explícitamente para que "Mi progreso" lea exactamente este registro.
-        localStorage.setItem(CLAVE_ESTUDIANTE_ACTIVO,nombre);
-        const verificacion=JSON.parse(localStorage.getItem(clave)||'{}');
-        local=Array.isArray(verificacion.evaluaciones) && verificacion.evaluaciones.some(e=>String(e?.categoria||'').toLowerCase()==='cuerpo' && String(e?.tipo||'').toLowerCase()==='practica');
-      }catch(e){console.error('No se pudo guardar Partes del Cuerpo en el progreso local:',e);}
-
-      // FIREBASE: cada intento queda como un resultado independiente para el docente.
-      try{
-        if(!window.db && typeof db!=='undefined')window.db=db;
-        if(window.db && typeof window.db.collection==='function'){
-          await window.db.collection('resultados').add(obj);
-          nube=true;
-        }
-      }catch(e){console.error('No se pudo guardar Partes del Cuerpo en Firebase:',e);}
+      try{if(typeof guardarPracticaRegistro==='function')guardarPracticaRegistro(obj);}catch(e){}
+      try{if(typeof guardarPracticaNube==='function')nube=await guardarPracticaNube(obj);}catch(e){}
     }
-
     const cont=document.getElementById('contenedor-tarjetas');
     if(!cont)return;
-    cont.innerHTML=`<section class="cuerpo10-final"><h2>🎉 ¡Great job!</h2><p><strong>${escLocal(nombre||'Estudiante')}</strong>, terminaste las 10 preguntas.</p><div class="numero">${aciertos} / ${banco.length}</div><p style="font-size:1.25rem"><strong>⭐ Nota: ${puntos} / 5</strong></p><p>${porcentaje}% de respuestas correctas.</p><p>${nombre?(local&&nube?'☁️ Resultado guardado en tu progreso y en Firebase.':local?'💾 Resultado guardado en tu progreso.':nube?'☁️ Resultado guardado en Firebase.':'⚠️ No se pudo confirmar el guardado.'):'ℹ️ Para guardar los puntos, entra como estudiante con nombre y PIN antes de jugar.'}</p><div><button type="button" onclick="mostrarPanelProgresoPractica()">📊 Ver mi progreso</button> <button type="button" onclick="window.mostrarPartesCuerpo10()">🔄 Volver a jugar</button> <button type="button" onclick="typeof regresarAlMenuEstudiante==='function'?regresarAlMenuEstudiante():location.reload()">↩️ Regresar</button></div></section>`;
+    cont.innerHTML=`<section class="cuerpo10-final"><h2>🎉 ¡Great job!</h2><p><strong>${escLocal(nombre||'Estudiante')}</strong>, terminaste las 10 preguntas.</p><div class="numero">${aciertos} / ${banco.length}</div><p style="font-size:1.25rem"><strong>⭐ Nota: ${puntos} / 5</strong></p><p>${porcentaje}% de respuestas correctas.</p><p>${nombre?(nube?'☁️ Resultado guardado en Firebase.':'💾 Resultado guardado en el progreso local.'):'ℹ️ Puedes jugar sin iniciar sesión. Para guardar estos puntos y que cuenten para tu insignia, entra como estudiante.'}</p><div><button type="button" onclick="window.mostrarPartesCuerpo10()">🔄 Volver a jugar</button> <button type="button" onclick="typeof regresarAlMenuEstudiante==='function'?regresarAlMenuEstudiante():location.reload()">↩️ Regresar</button></div></section>`;
     hablar('Great job!');
   }
   window._cuerpoHablar=hablar;
@@ -11871,54 +11837,85 @@ body.modo-estudio-estudiante-v2 main.content{
     return arr;
   }
 
-  window.mostrarPanelProgreso=async function(){
+  window.mostrarPanelProgreso=function(){
     var cont=document.getElementById('contenedor-tarjetas');
     if(!cont)return false;
     var nombre=nombreActivo();
     var main=document.querySelector('main.content');
-    if(main){main.style.display='flex';main.classList.remove('inicio-bienvenida');}
+    if(main){
+      main.style.display='flex';
+      main.style.visibility='visible';
+      main.style.opacity='1';
+      main.classList.remove('inicio-bienvenida');
+    }
     document.querySelectorAll('.tema').forEach(function(el){el.style.display='none';});
     var zona=document.querySelector('.zona-estudiante');if(zona)zona.style.display='none';
     var fila=document.querySelector('.fila-modos-aprendizaje');if(fila)fila.style.display='none';
     var dip=document.getElementById('tema-misDiplomas');if(dip)dip.style.display='none';
-    cont.style.display='block';cont.style.visibility='visible';cont.style.opacity='1';
+    cont.style.display='block';
+    cont.style.visibility='visible';
+    cont.style.opacity='1';
     cont.className='panel-dashboard progreso-vista-completa';
+
     if(!nombre){
       cont.innerHTML='<section class="progreso-hero"><h1>📝 Progreso de evaluación</h1><p>Primero entra como estudiante.</p><button type="button" class="btn-iniciar-evaluacion" onclick="irAccesoEstudiante()">👨‍🎓 Entrar como estudiante</button></section>';
       return false;
     }
 
+    /* Renderizar INMEDIATAMENTE desde el historial local. No esperamos Firebase
+       para mostrar las barras ni permitimos que una consulta lenta deje la vista en blanco. */
     var local={evaluaciones:[]};
-    try{local=typeof obtenerProgresoGuardado==='function'?(obtenerProgresoGuardado()||local):local;}catch(e){}
-    var localEv=[];try{localEv=typeof registrosDeEvaluacion==='function'?registrosDeEvaluacion(local.evaluaciones||[]):(local.evaluaciones||[]);}catch(e){localEv=local.evaluaciones||[];}
-    var nube=await obtenerEvaluacionesFirebase(nombre);
-    var ev=unirYDeduplicar(localEv,nube);
-    var temas=(typeof nombresTemas==='object'&&nombresTemas)?nombresTemas:{};
-    var porTema={};
-    ev.forEach(function(e){
-      if(!e || String(e.tipo||'evaluacion1').toLowerCase()==='actividad2') return;
-      var cat=String(e.categoria||'').trim();
-      if(!cat || cat==='general') return;
-      var a=porTema[cat];
-      var et=Date.parse(e.fechaISO||'')||Number(e.id)||0;
-      var at=a?(Date.parse(a.fechaISO||'')||Number(a.id)||0):0;
-      if(!a || et>=at) porTema[cat]=e;
-    });
-    function fila(cat){
-      var e=porTema[cat];
-      if(!e)return '<div class="estado-tema-row pendiente"><div class="estado-tema-nombre"><strong>'+safe(temaNombre(cat))+'</strong></div><div class="estado-tema-datos"><div class="estado-tema-barra"><span style="width:0%"></span></div><div class="estado-tema-estado">⏳ Falta</div></div><div class="estado-tema-nota">Pendiente</div></div>';
-      var pct=Math.max(0,Math.min(100,Number(e.porcentaje||0)));
-      var ok=false;try{ok=typeof evaluacionAprobada==='function'?evaluacionAprobada(e):Number(e.nota||0)>=3;}catch(x){ok=Number(e.nota||0)>=3;}
-      return '<div class="estado-tema-row '+(ok?'aprobada':'reprobada')+'"><div class="estado-tema-nombre"><strong>'+safe(temaNombre(cat))+'</strong></div><div class="estado-tema-datos"><div class="estado-tema-barra"><span style="width:'+pct+'%"></span></div><div class="estado-tema-estado">'+(ok?'🔵 Aprobada':'🔴 No aprobada')+' · '+safe(e.fecha||'')+'</div></div><div class="estado-tema-nota">'+Number(e.nota||0).toFixed(1)+' / 5</div></div>';
+    try{local=typeof obtenerProgresoGuardado==='function'?(obtenerProgresoGuardado()||local):local;}catch(e){console.warn('No se pudo leer el progreso local:',e);}
+    var localEv=[];
+    try{localEv=typeof registrosDeEvaluacion==='function'?registrosDeEvaluacion(local.evaluaciones||[]):(local.evaluaciones||[]);}catch(e){localEv=local.evaluaciones||[];}
+
+    function renderEvaluaciones(ev, origen){
+      ev=Array.isArray(ev)?ev:[];
+      var temas=(typeof nombresTemas==='object'&&nombresTemas)?nombresTemas:{};
+      var porTema={};
+      ev.forEach(function(e){
+        if(!e)return;
+        var tipo=String(e.tipo||'evaluacion1').toLowerCase();
+        if(tipo==='actividad2')return;
+        var cat=String(e.categoria||'').trim();
+        if(!cat||cat==='general')return;
+        var anterior=porTema[cat];
+        var et=Date.parse(e.fechaISO||'')||Number(e.id)||0;
+        var at=anterior?(Date.parse(anterior.fechaISO||'')||Number(anterior.id)||0):0;
+        if(!anterior||et>=at)porTema[cat]=e;
+      });
+      function fila(cat){
+        var e=porTema[cat];
+        if(!e)return '<div class="estado-tema-row pendiente"><div class="estado-tema-nombre"><strong>'+safe(temaNombre(cat))+'</strong></div><div class="estado-tema-datos"><div class="estado-tema-barra"><span style="width:0%"></span></div><div class="estado-tema-estado">⏳ Falta</div></div><div class="estado-tema-nota">Pendiente</div></div>';
+        var pct=Math.max(0,Math.min(100,Number(e.porcentaje||0)));
+        var ok=false;try{ok=typeof evaluacionAprobada==='function'?evaluacionAprobada(e):Number(e.nota||0)>=3;}catch(x){ok=Number(e.nota||0)>=3;}
+        return '<div class="estado-tema-row '+(ok?'aprobada':'reprobada')+'"><div class="estado-tema-nombre"><strong>'+safe(temaNombre(cat))+'</strong></div><div class="estado-tema-datos"><div class="estado-tema-barra"><span style="width:'+pct+'%"></span></div><div class="estado-tema-estado">'+(ok?'🔵 Aprobada':'🔴 No aprobada')+' · '+safe(e.fecha||'')+'</div></div><div class="estado-tema-nota">'+Number(e.nota||0).toFixed(1)+' / 5</div></div>';
+      }
+      var keys=Object.keys(temas);
+      var rows=keys.map(fila).join('');
+      var realizadas=Object.values(porTema);
+      var ganadas=realizadas.filter(function(e){try{return typeof evaluacionAprobada==='function'?evaluacionAprobada(e):Number(e.nota||0)>=3;}catch(x){return Number(e.nota||0)>=3;}}).length;
+      var perdidas=realizadas.length-ganadas;
+      var pendientes=Math.max(0,keys.length-realizadas.length);
+      var puntosDiplomas=0;try{puntosDiplomas=typeof calcularPuntosDesdeHistorial==='function'?calcularPuntosDesdeHistorial(ev):0;}catch(x){}
+      cont.innerHTML='<section class="progreso-hero"><h1>📝 Progreso de evaluación</h1><p><strong>'+safe(nombre)+'</strong>, aquí puedes ver tus barras de progreso de evaluación.</p><div style="margin:14px 0 20px;text-align:left;"><button type="button" class="btn-iniciar-evaluacion btn-regreso-progreso-evaluacion" onclick="return regresarAlMenuEstudiante();">↩️ Panel estudiante</button></div><div class="tarjetas-resumen-dashboard progreso-resumen"><div class="tarjeta-dashboard"><span>📝</span><strong>'+keys.length+'</strong><small>Total evaluaciones</small></div><div class="tarjeta-dashboard"><span>🔵</span><strong>'+ganadas+'</strong><small>Aprobadas</small></div><div class="tarjeta-dashboard"><span>🔴</span><strong>'+perdidas+'</strong><small>No aprobadas</small></div><div class="tarjeta-dashboard"><span>⏳</span><strong>'+pendientes+'</strong><small>Pendientes</small></div></div></section><section class="tarjeta-panel estado-tus-temas"><h2>📊 Barras de progreso de evaluación</h2><p>🔵 Azul = aprobada · 🔴 Rojo = no aprobada · ⏳ Pendiente.</p><div class="estado-temas-lista">'+rows+'</div></section>';
+      cont.scrollIntoView({behavior:'smooth',block:'start'});
     }
-    var keys=Object.keys(temas);
-    var rows=keys.map(fila).join('');
-    var realizadas=Object.values(porTema);
-    var ganadas=realizadas.filter(function(e){try{return typeof evaluacionAprobada==='function'?evaluacionAprobada(e):Number(e.nota||0)>=3;}catch(x){return Number(e.nota||0)>=3;}}).length;
-    var perdidas=realizadas.length-ganadas;
-    var puntosDiplomas=0;try{puntosDiplomas=typeof calcularPuntosDesdeHistorial==='function'?calcularPuntosDesdeHistorial(ev):0;}catch(x){}
-    cont.innerHTML='<section class="progreso-hero"><h1>📝 Progreso de evaluación</h1><p><strong>'+safe(nombre)+'</strong>, este panel muestra tus evaluaciones guardadas en Firebase.</p><div style="margin:14px 0 20px;text-align:left;"><button type="button" class="btn-iniciar-evaluacion btn-regreso-progreso-evaluacion" onclick="return regresarAlMenuEstudiante();">↩️ Regresar al espacio principal del estudiante</button></div><div class="tarjetas-resumen-dashboard progreso-resumen"><div class="tarjeta-dashboard"><span>📝</span><strong>'+keys.length+'</strong><small>Total evaluaciones</small></div><div class="tarjeta-dashboard"><span>🔵</span><strong>'+ganadas+'</strong><small>Aprobadas</small></div><div class="tarjeta-dashboard"><span>🔴</span><strong>'+perdidas+'</strong><small>No aprobadas</small></div><div class="tarjeta-dashboard"><span>⏳</span><strong>'+Math.max(0,keys.length-realizadas.length)+'</strong><small>Pendientes</small></div><div class="tarjeta-dashboard"><span>🏆</span><strong>'+puntosDiplomas+'</strong><small>Puntos para diplomas</small></div></div></section><section class="tarjeta-panel estado-tus-temas"><h2>📊 Estado de las evaluaciones</h2><p>🔵 Azul = aprobada · 🔴 Rojo = no aprobada.</p><div class="estado-temas-lista">'+rows+'</div></section>';
-    cont.scrollIntoView({behavior:'smooth',block:'start'});window.scrollTo({top:0,behavior:'smooth'});return false;
+
+    /* Primero muestra las barras locales, sin esperar red. */
+    renderEvaluaciones(localEv,'local');
+    window.scrollTo({top:0,behavior:'smooth'});
+
+    /* Después sincroniza con Firebase y reemplaza solo si llegan datos válidos. */
+    if(typeof obtenerEvaluacionesFirebase==='function'){
+      obtenerEvaluacionesFirebase(nombre).then(function(nube){
+        if(Array.isArray(nube)&&nube.length){
+          var combinado=unirYDeduplicar(localEv,nube);
+          renderEvaluaciones(combinado,'firebase');
+        }
+      }).catch(function(err){console.warn('Firebase no disponible para progreso; se conserva el progreso local.',err);});
+    }
+    return false;
   };
   window.obtenerEvaluacionesFirebase=obtenerEvaluacionesFirebase;
 })();
