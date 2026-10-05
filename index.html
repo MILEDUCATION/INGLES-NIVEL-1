@@ -4303,7 +4303,7 @@ function guardarRespuestaEvaluacion() {
   return false;
 }
 
-function finalizarEvaluacion() {
+async function finalizarEvaluacion() {
   const preguntas = Array.isArray(evaluacionActual?.preguntas) ? evaluacionActual.preguntas : [];
   if (!preguntas.length) {
     alert('⚠️ No hay preguntas cargadas para finalizar.');
@@ -4349,6 +4349,19 @@ function finalizarEvaluacion() {
     nota,
     errores
   );
+
+  // Guardar también en Firebase para que el resultado aparezca en el panel docente.
+  // El historial local se conserva; si Firebase falla, la evaluación sigue funcionando.
+  const guardadoFirebase = await guardarEvaluacion1Firebase(
+    evaluacionActual.categoria,
+    correctas,
+    total,
+    porcentaje,
+    nota
+  );
+  console.log(guardadoFirebase
+    ? '☁️ Evaluación 1 guardada en Firebase'
+    : '⚠️ Evaluación 1 no pudo guardarse en Firebase; se conserva localmente');
 
   const mensaje = nota === 5 ? '¡Excelente trabajo!' :
                   nota === 4 ? '¡Muy bien!' :
