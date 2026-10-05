@@ -1789,7 +1789,6 @@
           </button>
 </div>
 <div class="panel-modo" id="panel-practica">
-<div style="margin:0 0 16px;text-align:left;"><button type="button" class="btn-iniciar-evaluacion" id="btn-regresar-espacio-desde-practica" onclick="return window.regresarDesdeEvaluacionDirecto();">↩️ Regresar al espacio del estudiante</button></div>
 <label for="select-practica"><strong>Elige un tema para practicar:</strong></label>
 <select id="select-practica" onchange="prepararPractica(this.value)">
 <option value="">-- Seleccionar Práctica --</option>
@@ -1830,7 +1829,6 @@
 <p class="descripcion-modo">💡 Primero elige el tema y la cantidad. Al pulsar <strong>Iniciar Práctica</strong> se mostrarán exactamente esas preguntas.</p>
 </div>
 <div class="panel-modo" id="panel-evaluacion" style="display:none;">
-<div style="margin:0 0 16px;text-align:left;"><button type="button" class="btn-iniciar-evaluacion" id="btn-regresar-espacio-desde-evaluacion" onclick="return regresarDesdeEvaluacionDirecto();">↩️ Regresar al espacio del estudiante</button></div>
 <div class="resumen-evaluacion-estudiante" id="resumen-evaluacion-estudiante" style="margin:0 0 16px;padding:16px;border:2px solid #c9e5f7;border-radius:14px;background:#f5fbff;">
 <div style="font-weight:900;font-size:1.05rem;margin-bottom:10px;">📊 Mi resumen de evaluación</div>
 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px;">
@@ -3396,27 +3394,47 @@
       }
     }
 
-    // ===== RESULTADOS DE ACTIVIDADES =====
-    // Cada intento se guarda en Firebase para que el docente pueda ver
-    // también la actividad más reciente, aunque la nota sea igual o menor.
-    // El progreso del estudiante conserva por separado su mejor nota por tema.
+    // ===== ACTIVIDADES: UNA SOLA NOTA POR TEMA =====
+    // Reemplaza la nota anterior únicamente cuando el nuevo intento es mejor.
+    // Nunca suma 4 + 5; conserva solo 5.
     async function guardarMejorResultadoPorTema(obj) {
       try {
         if(!window.db || !obj || !obj.estudiante) return false;
         const estudiante=String(obj.estudiante).trim();
         const tema=String(obj.tema || obj.categoria || '').trim();
-        const registro={
-          ...obj,
-          estudiante,
-          nombre:estudiante,
-          tema,
-          fechaISO:obj.fechaISO || new Date().toISOString(),
-          intentoId:obj.intentoId || (Date.now()+'_'+Math.random().toString(36).slice(2))
-        };
-        await window.db.collection('resultados').add(registro);
+        const snap=await window.db.collection('resultados').where('estudiante','==',estudiante).get();
+        const coincidencias=[];
+        snap.forEach(doc=>{
+          const d=doc.data()||{};
+          const tipo=String(d.tipo||'').toLowerCase();
+          const temaDoc=String(d.tema||d.categoria||'').trim();
+          if((tipo==='practica'||tipo==='actividad2') && temaDoc.toLowerCase()===tema.toLowerCase()){
+            coincidencias.push({ref:doc.ref,data:d});
+          }
+        });
+        const notaNueva=Number(obj.nota ?? obj.puntos ?? 0);
+        let mejor=null;
+        coincidencias.forEach(x=>{
+          const n=Number(x.data.nota ?? x.data.puntos ?? 0);
+          if(!mejor || n>mejor.nota) mejor={...x,nota:n};
+        });
+        if(mejor && mejor.nota >= notaNueva){
+          for(const x of coincidencias){
+            if(x.ref.id!==mejor.ref.id){ try{await x.ref.delete();}catch(e){} }
+          }
+          return true;
+        }
+        if(mejor){
+          await mejor.ref.set({...obj,estudiante,nombre:estudiante,tema,tipo:'practica'},{merge:true});
+          for(const x of coincidencias){
+            if(x.ref.id!==mejor.ref.id){ try{await x.ref.delete();}catch(e){} }
+          }
+          return true;
+        }
+        await window.db.collection('resultados').add({...obj,estudiante,nombre:estudiante,tema});
         return true;
       }catch(e){
-        console.error('No se pudo guardar el resultado de la actividad en Firebase:',e);
+        console.error('No se pudo guardar la mejor nota por tema:',e);
         return false;
       }
     }
@@ -3884,13 +3902,9 @@
 
         const audio = item.pasado ? `${item.ingles}, ${item.pasado}` : item.ingles;
 
-        const enunciadoVisible = categoria === 'abecedario'
-          ? ''
-          : ` <strong>"${obtenerEnunciadoPractica(item, categoria)}"</strong>`;
-
         cardPregunta.innerHTML = `
           <div class="enunciado-linea">
-            <span>${textoPregunta}${enunciadoVisible}</span>
+            <span>${textoPregunta} <strong>"${obtenerEnunciadoPractica(item, categoria)}"</strong></span>
             <span class="circulo-negro" onclick="hablar('${audio.replace(/'/g, "\\'")}')" title="Escuchar pronunciación">🔴</span>
           </div>
           <div class="opciones-grupo" id="opciones-${prefix}-${index}">
@@ -3996,45 +4010,10 @@ function actualizarResumenEvaluacionPanel() {
 
 function mostrarPanelEvaluacionSeguro(event) {
   cerrarPortadaBloqueante();
-  // La portada usa .inicio-bienvenida para ocultar todos los hijos del contenido.
-  // Al entrar directamente a Evaluación debemos quitar esa clase antes de mostrar el panel.
-  const mainEvaluacion = document.querySelector('main.content');
-  if (mainEvaluacion) {
-    mainEvaluacion.classList.remove('inicio-bienvenida');
-    mainEvaluacion.style.display = 'flex';
-    mainEvaluacion.style.visibility = 'visible';
-    mainEvaluacion.style.opacity = '1';
-  }
-  // La pantalla de evaluación es independiente del dashboard del estudiante.
-  const dashboardEvaluacion = document.getElementById('contenedor-tarjetas');
-  if (dashboardEvaluacion) {
-    dashboardEvaluacion.style.display = 'none';
-    dashboardEvaluacion.style.visibility = 'hidden';
-    dashboardEvaluacion.style.opacity = '0';
-  }
-  const zonaEstudianteEvaluacion = document.querySelector('.zona-estudiante');
-  if (zonaEstudianteEvaluacion) zonaEstudianteEvaluacion.style.display = 'none';
-
   if (event) {
     event.preventDefault();
     event.stopPropagation();
   }
-  // Al entrar a Práctica/Evaluación desde el espacio del estudiante,
-  // ocultamos el panel de acceso y las tarjetas del estudiante para que
-  // la vista de trabajo quede limpia y no se superponga.
-  const zonaModo = document.querySelector('.zona-estudiante');
-  if (zonaModo) {
-    zonaModo.style.display = 'none';
-    zonaModo.style.visibility = 'hidden';
-  }
-  const contModo = document.getElementById('contenedor-tarjetas');
-  if (contModo) {
-    contModo.style.display = 'none';
-    contModo.style.visibility = 'hidden';
-  }
-  const tituloModo = document.getElementById('titulo-tema');
-  if (tituloModo) tituloModo.style.display = 'none';
-
   const fila = document.querySelector('.fila-modos-aprendizaje');
   const practica = document.getElementById('panel-practica');
   const evaluacion = document.getElementById('panel-evaluacion');
@@ -4081,35 +4060,6 @@ window.abrirModoEvaluacion = abrirModoEvaluacion;
 
 function seleccionarModo(modo) {
   cerrarPortadaBloqueante();
-  // Garantizar que el modo seleccionado no quede oculto por la clase de portada.
-  const mainModo = document.querySelector('main.content');
-  if (mainModo) {
-    mainModo.classList.remove('inicio-bienvenida');
-    mainModo.style.display = 'flex';
-    mainModo.style.visibility = 'visible';
-    mainModo.style.opacity = '1';
-  }
-  // La vista de modo es independiente del dashboard del estudiante.
-  const dashboardModo = document.getElementById('contenedor-tarjetas');
-  if (dashboardModo) {
-    dashboardModo.style.display = 'none';
-    dashboardModo.style.visibility = 'hidden';
-    dashboardModo.style.opacity = '0';
-  }
-  const zonaEstudianteModo = document.querySelector('.zona-estudiante');
-  if (zonaEstudianteModo) zonaEstudianteModo.style.display = 'none';
-  const zonaModo2 = document.querySelector('.zona-estudiante');
-  if (zonaModo2) {
-    zonaModo2.style.display = 'none';
-    zonaModo2.style.visibility = 'hidden';
-  }
-  const contModo2 = document.getElementById('contenedor-tarjetas');
-  if (contModo2) {
-    contModo2.style.display = 'none';
-    contModo2.style.visibility = 'hidden';
-  }
-  const tituloModo2 = document.getElementById('titulo-tema');
-  if (tituloModo2) tituloModo2.style.display = 'none';
   const practica = document.getElementById('panel-practica');
   const evaluacion = document.getElementById('panel-evaluacion');
   const fila = document.querySelector('.fila-modos-aprendizaje');
@@ -4192,8 +4142,6 @@ function obtenerTextoPreguntaEvaluacion(item) {
   const categoria=String(item?.__categoriaFuente||evaluacionActual?.categoria||'').trim();
   // En Abecedario evaluamos la escucha: no mostramos la letra en la pregunta.
   if(categoria==='abecedario') return '🔊 Escucha el sonido y selecciona la letra correcta.';
-  // En Pronombres Personales no mostramos el pronombre en español; se identifica por audio.
-  if(categoria==='pronombresPersonales') return '🔊 Escucha el pronombre y selecciona la opción correcta en inglés.';
   // En Días de la semana NO mostramos el día en español: el estudiante debe escucharlo.
   if(categoria==='dias') return '🔊 Escucha el día y selecciona cómo se dice en inglés.';
   // En Evaluación de colores tampoco mostramos el símbolo coloreado ni el nombre en español:
@@ -4355,7 +4303,7 @@ function guardarRespuestaEvaluacion() {
   return false;
 }
 
-async function finalizarEvaluacion() {
+function finalizarEvaluacion() {
   const preguntas = Array.isArray(evaluacionActual?.preguntas) ? evaluacionActual.preguntas : [];
   if (!preguntas.length) {
     alert('⚠️ No hay preguntas cargadas para finalizar.');
@@ -4393,7 +4341,7 @@ async function finalizarEvaluacion() {
 
   // Guardar antes de mostrar el resultado para que el progreso, colores,
   // historial y diplomas queden actualizados inmediatamente.
-  await guardarResultadoEvaluacionHistorial(
+  guardarResultadoEvaluacionHistorial(
     evaluacionActual.categoria,
     correctas,
     total,
@@ -4401,21 +4349,6 @@ async function finalizarEvaluacion() {
     nota,
     errores
   );
-
-  // También guardar la Evaluación 1 en Firebase para que el docente
-  // pueda verla desde cualquier computador/dispositivo. El guardado
-  // local se conserva para no alterar el progreso del estudiante.
-  try {
-    await window.guardarEvaluacion1Firebase(
-      evaluacionActual.categoria,
-      correctas,
-      total,
-      porcentaje,
-      nota
-    );
-  } catch (e) {
-    console.error('No se pudo sincronizar la Evaluación 1 con Firebase:', e);
-  }
 
   const mensaje = nota === 5 ? '¡Excelente trabajo!' :
                   nota === 4 ? '¡Muy bien!' :
@@ -5133,7 +5066,7 @@ function obtenerCertificadosPorPuntos(puntos) {
   return METAS_DIPLOMAS.map((meta,i)=>({meta,titulo:DIPLOMAS_NIVEL_1?.[i]?.titulo || `Diploma ${i+1}`}));
 }
 
-async function guardarResultadoEvaluacionHistorial(categoria, correctas, total, porcentaje, nota, errores) {
+function guardarResultadoEvaluacionHistorial(categoria, correctas, total, porcentaje, nota, errores) {
   const data = obtenerProgresoGuardado();
   const ahora = Date.now();
   data.evaluaciones = Array.isArray(data.evaluaciones) ? data.evaluaciones : [];
@@ -5160,37 +5093,6 @@ async function guardarResultadoEvaluacionHistorial(categoria, correctas, total, 
   }));
 
   guardarProgresoGuardado(data);
-
-  // Copia en la nube de la Evaluación 1: el progreso local se conserva,
-  // pero el resultado también queda disponible para el docente desde
-  // cualquier computador mediante Firestore -> resultados.
-  let nube=false;
-  try{
-    const d=window.db || (typeof db!=='undefined'?db:null);
-    const estudiante=obtenerNombreEstudiante();
-    if(d && estudiante){
-      await d.collection('resultados').add({
-        estudiante,
-        nombre:estudiante,
-        actividad:'Evaluación 1 — Evaluación tradicional',
-        tema: categoria === 'general' ? 'Evaluación General' : (nombresTemas[categoria] || categoria),
-        resultado:`${porcentaje}/100`,
-        puntos:porcentaje,
-        nota,
-        porcentaje,
-        correctas,
-        total,
-        fecha:new Date().toLocaleString('es-CO'),
-        fechaISO:new Date().toISOString(),
-        evaluacion:'Evaluación 1',
-        tipo:'evaluacion1'
-      });
-      nube=true;
-    }
-  }catch(e){
-    console.error('No se pudo sincronizar la Evaluación 1 con Firebase:',e);
-  }
-  return nube;
 }
 
 function calcularPromedioNotas(evaluaciones) {
@@ -5248,87 +5150,64 @@ function mostrarModoDesdeEspacioEstudiante(modo){
 window.mostrarModoDesdeEspacioEstudiante=mostrarModoDesdeEspacioEstudiante;
 
 function regresarAlMenuEstudiante(){
-  /* Retorno único y seguro al panel principal del estudiante.
-     No depende de la vista desde la que se llega y no toca la sesión. */
+  // Vuelve SIEMPRE al espacio del estudiante, sin cerrar su sesión.
+  // Desde progreso, práctica, evaluación o diplomas debe volver a ver
+  // las tres funciones del estudiante: evaluaciones, práctica y diplomas.
   try {
-    const nombre = (typeof obtenerNombreEstudiante==='function') ? String(obtenerNombreEstudiante()||'').trim() : '';
+    const nombre = obtenerNombreEstudiante();
     const main = document.querySelector('main.content');
     const zona = document.querySelector('main.content .zona-estudiante');
-    const menu = document.getElementById('menu-estudiante-logueado');
     const activo = document.getElementById('estudiante-activo');
+    const menu = document.getElementById('menu-estudiante-logueado');
     const contenedor = document.getElementById('contenedor-tarjetas');
     const titulo = document.getElementById('titulo-tema');
 
-    /* Cerrar cualquier vista secundaria. */
-    document.querySelectorAll('.tema').forEach(el => {
-      el.style.display='none';
-      el.style.visibility='hidden';
-      el.style.opacity='0';
-    });
-    ['tema-foroPresentacion','tema-misDiplomas'].forEach(id=>{
-      const el=document.getElementById(id);
-      if(el){el.style.display='none';el.style.visibility='hidden';el.style.opacity='0';}
-    });
-    const fila=document.querySelector('.fila-modos-aprendizaje');
-    if(fila){fila.style.display='none';fila.style.visibility='hidden';fila.style.opacity='0';}
-    ['panel-practica','panel-evaluacion'].forEach(id=>{
-      const el=document.getElementById(id);
-      if(el){el.style.display='none';el.style.visibility='hidden';el.style.opacity='0';}
-    });
+    // Cerrar vistas secundarias.
+    document.querySelectorAll('.tema').forEach(t => t.style.display='none');
+    const foro = document.getElementById('tema-foroPresentacion');
+    if (foro) foro.style.display='none';
+    const diplomas = document.getElementById('tema-misDiplomas');
+    if (diplomas) diplomas.style.display='none';
 
-    /* Restaurar el contenedor principal sin volver a la portada. */
-    if(main){
+    if (main) {
       main.style.display='flex';
-      main.style.visibility='visible';
-      main.style.opacity='1';
-      main.classList.remove('inicio-bienvenida','vista-evaluacion-definitiva');
+      main.classList.remove('inicio-bienvenida');
     }
-    if(titulo){titulo.style.display='none';titulo.style.visibility='hidden';}
-    if(contenedor){
-      contenedor.style.display='none';
-      contenedor.style.visibility='hidden';
-      contenedor.style.opacity='0';
-      contenedor.className='grid-cards';
+    if (contenedor) {
+      contenedor.style.display='block';
+      contenedor.style.visibility='visible';
+      contenedor.style.opacity='1';
+      contenedor.className='panel-dashboard';
       contenedor.innerHTML='';
     }
+    if (titulo) titulo.style.display='none';
+    if (zona) zona.style.display='flex';
+    if (activo) activo.textContent = nombre ? '👤 Estudiante activo: ' + nombre : '👤 Selecciona un estudiante';
+    if (menu) menu.style.display = nombre ? 'flex' : 'none';
 
-    /* Esta es la pantalla que debe quedar visible: el acceso + menú del estudiante. */
-    if(zona){
-      zona.style.display='flex';
-      zona.style.visibility='visible';
-      zona.style.opacity='1';
+    // Al regresar desde diplomas/progreso, vuelve a quedar visible el
+    // espacio completo del estudiante, incluyendo las opciones para realizar
+    // práctica y evaluación.
+    const filaModos = document.querySelector('.fila-modos-aprendizaje');
+    if (filaModos) {
+      filaModos.style.display='block';
+      filaModos.style.visibility='visible';
+      filaModos.style.opacity='1';
     }
-    if(activo){
-      activo.style.display='block';
-      activo.style.visibility='visible';
-      activo.style.opacity='1';
-      activo.textContent = nombre ? '👤 Estudiante activo: '+nombre : '👤 Selecciona un estudiante';
-    }
-    if(menu){
-      menu.style.display = nombre ? 'flex' : 'none';
-      menu.style.visibility = nombre ? 'visible' : 'hidden';
-      menu.style.opacity = nombre ? '1' : '0';
-    }
+    const panelPractica = document.getElementById('panel-practica');
+    const panelEvaluacion = document.getElementById('panel-evaluacion');
+    if (panelPractica) panelPractica.style.display='flex';
+    if (panelEvaluacion) panelEvaluacion.style.display='none';
+    const btnPractica = document.getElementById('btn-modo-practica');
+    const btnEvaluacion = document.getElementById('btn-modo-evaluacion');
+    if (btnPractica) btnPractica.classList.add('activo');
+    if (btnEvaluacion) btnEvaluacion.classList.remove('activo');
 
-    /* El espacio principal no muestra el selector interno de práctica/evaluación. */
-    if(fila){fila.style.display='none';}
-
-    window.scrollTo({top:0,behavior:'smooth'});
-    return false;
-  }catch(e){
-    console.error('No fue posible regresar al espacio del estudiante:',e);
-    /* Fallback: aunque otra función antigua falle, intenta mostrar el menú. */
-    try{
-      const zona=document.querySelector('main.content .zona-estudiante');
-      const menu=document.getElementById('menu-estudiante-logueado');
-      const main=document.querySelector('main.content');
-      if(main){main.style.display='flex';main.classList.remove('inicio-bienvenida');}
-      if(zona){zona.style.display='flex';zona.style.visibility='visible';zona.style.opacity='1';}
-      if(menu && typeof obtenerNombreEstudiante==='function' && obtenerNombreEstudiante()){
-        menu.style.display='flex';menu.style.visibility='visible';menu.style.opacity='1';
-      }
-    }catch(_e){}
-    return false;
+    // No llamar a volverInicio(): esa función lleva a la portada/inicio
+    // y ocultaba el espacio del estudiante que el usuario necesita ver.
+    window.scrollTo({top:0, behavior:'smooth'});
+  } catch(e) {
+    console.error('No fue posible regresar al espacio del estudiante:', e);
   }
 }
 
@@ -6869,29 +6748,7 @@ function mostrarDiplomas(){
   const reg=document.getElementById('tema-registroEstudiante');
   if(foro) foro.style.display='none';
   if(reg) reg.style.display='none';
-  if(content) {
-    content.style.display='';
-    content.style.visibility='visible';
-    content.classList.remove('inicio-bienvenida');
-    // Al entrar a Diplomas se muestra SOLO la galería de diplomas.
-    // El acceso del estudiante y el selector de modo no deben quedar debajo.
-    const zonaEstudiante = content.querySelector('.zona-estudiante');
-    const filaModos = content.querySelector('.fila-modos-aprendizaje');
-    const contenedorTarjetas = document.getElementById('contenedor-tarjetas');
-    if(zonaEstudiante){
-      zonaEstudiante.style.display='none';
-      zonaEstudiante.style.visibility='hidden';
-    }
-    if(filaModos){
-      filaModos.style.display='none';
-      filaModos.style.visibility='hidden';
-      filaModos.style.opacity='0';
-    }
-    if(contenedorTarjetas){
-      contenedorTarjetas.style.display='none';
-      contenedorTarjetas.style.visibility='hidden';
-    }
-  }
+  if(content) { content.style.display=''; content.style.visibility='visible'; }
   document.querySelectorAll('.tema').forEach(t=>t.style.display='none');
   const sec=document.getElementById('tema-misDiplomas');
   if(sec){
@@ -7097,8 +6954,7 @@ async function verCertificado(meta){
     const w=window.open('','_blank');
     if(!w){alert('Permite las ventanas emergentes para ver el diploma.');return;}
     w.document.open();
-    w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Diploma - ${escapeForo(r.nombre)}</title><style>html,body{margin:0;padding:0;width:100%;height:100%;background:#fff;overflow:auto}body{display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box}img{display:block;width:auto;height:auto;max-width:min(850px,86vw);max-height:82vh;object-fit:contain}</style></head><body><img src="${r.dataUrl}" alt="Diploma de ${escapeForo(r.nombre)}">
-</body></html>`);
+    w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Diploma - ${escapeForo(r.nombre)}</title><style>html,body{margin:0;padding:0;width:100%;height:100%;background:#fff;overflow:auto}body{display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box}img{display:block;width:auto;height:auto;max-width:min(850px,86vw);max-height:82vh;object-fit:contain}</style></head><body><img src="${r.dataUrl}" alt="Diploma de ${escapeForo(r.nombre)}"></body></html>`);
     w.document.close();
   }catch(e){console.error(e);alert('No se pudo generar el diploma.');}
 }
@@ -7475,7 +7331,7 @@ document.addEventListener('DOMContentLoaded', function(){
       return true;
     }catch(e){console.error('No se pudo guardar resultado en Firebase:',e);return false;}
   }
-  window.guardarEvaluacion1Firebase = async function(categoria,correctas,total,porcentaje,nota){
+  async function guardarEvaluacion1Firebase(categoria,correctas,total,porcentaje,nota){
     const obj={estudiante:activo(),nombre:activo(),actividad:'Evaluación 1 — Evaluación tradicional',tema:temaNombre(categoria),resultado:`${porcentaje}/100`,puntos:porcentaje,nota,porcentaje,correctas,total,fecha:fecha(),fechaISO:new Date().toISOString(),evaluacion:'Evaluación 1',tipo:'evaluacion1'};
     return guardarFirebaseResultado(obj);
   }
@@ -7673,7 +7529,7 @@ document.addEventListener('DOMContentLoaded', function(){
     }catch(e){console.error(e);box.innerHTML='<p>⚠️ No se pudieron cargar los resultados de Firebase. Revisa las reglas de Firestore.</p>';return;}
     lista.sort((a,b)=>String(b.fechaISO||'').localeCompare(String(a.fechaISO||'')));
     const estudiantes=[...new Set(lista.map(x=>x.estudiante||x.nombre).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
-    box.innerHTML=`<div class="filtro-resultados-docente"><select id="filtro-estudiante-resultados"><option value="">Todos los estudiantes</option>${estudiantes.map(x=>`<option value="${safe(x)}">${safe(x)}</option>`).join('')}</select><select id="filtro-tipo-resultados"><option value="">Todos los resultados</option><option value="evaluacion1">Evaluación 1</option><option value="actividad2">Evaluación 2 / Actividad</option><option value="practica">Práctica Jugando</option></select><button type="button" class="btn-docente-principal" onclick="mostrarResultadosActividadesDocente()">🔄 Actualizar</button></div><div id="tabla-resultados-docente"></div>`;
+    box.innerHTML=`<div class="filtro-resultados-docente"><select id="filtro-estudiante-resultados"><option value="">Todos los estudiantes</option>${estudiantes.map(x=>`<option value="${safe(x)}">${safe(x)}</option>`).join('')}</select><select id="filtro-tipo-resultados"><option value="">Todos los resultados</option><option value="evaluacion1">Evaluación 1</option><option value="actividad2">Evaluación 2 / Actividad</option></select><button type="button" class="btn-docente-principal" onclick="mostrarResultadosActividadesDocente()">🔄 Actualizar</button></div><div id="tabla-resultados-docente"></div>`;
     window.__resultadosDocente=lista;renderTablaResultadosDocente();
   };
   window.renderTablaResultadosDocente=function(){
@@ -8288,7 +8144,7 @@ document.addEventListener('DOMContentLoaded', function(){
       </section>
       <section class="estudiante-bloque-menu">
         <h3>🏅 RECONOCIMIENTOS</h3>
-        <p>Las 11 insignias se desbloquean con los puntos de práctica y se descargan una por una.</p>
+        <p>Las 10 insignias se desbloquean con los puntos de práctica y se descargan una por una.</p>
         <div class="estudiante-botones">
           <button class="boton-insignias" type="button" onclick="mostrarInsigniasPractica()">🏅 Mis 11 insignias</button>
           <button type="button" onclick="mostrarDiplomas()">🏆 Mis diplomas</button>
@@ -9072,9 +8928,6 @@ body.pantalla-inicio .zona-estudiante{display:none!important}
     document.body.classList.remove('pantalla-inicio');
     const {main,cont}=preparar();
     const zona=document.querySelector('.zona-estudiante'); if(zona)zona.style.display='none';
-    // Al abrir Práctica/Evaluación no debe quedar visible el dashboard del estudiante detrás.
-    const dashboard=document.getElementById('contenedor-tarjetas');
-    if(dashboard){ dashboard.style.display='none'; dashboard.style.visibility='hidden'; dashboard.style.opacity='0'; }
     const fila=document.querySelector('.fila-modos-aprendizaje');
     if(!fila)return;
     fila.style.display='block';
@@ -10751,7 +10604,7 @@ function volverEspacioEstudianteReal(){
   }
   async function presence(){
     const r={};
-    try{if(dbx()){const s=await dbx().collection('chatPresencia').get(),now=Date.now();s.forEach(d=>{const x=d.data()||{};r[d.id]={...x,online:Number(x.ts||0)>0 && (now-Number(x.ts||0))<35000}})}}catch(e){}
+    try{if(dbx()){const s=await dbx().collection('chatPresencia').get(),now=Date.now();s.forEach(d=>{const x=d.data()||{};r[d.id]={...x,online:x.online===true&&(now-Number(x.ts||0)<35000)}})}}catch(e){}
     return r;
   }
   async function lastByPerson(){
@@ -10817,68 +10670,7 @@ function volverEspacioEstudianteReal(){
   }
   window.__chatOverride20260928=true;
 })();
-</script>
-<script id="regreso-evaluacion-real-2026">
-(function(){
-  'use strict';
-  window.regresarDesdeEvaluacionDirecto=function(){
-    var nombre='';
-    try{ nombre=String(localStorage.getItem('aprendeInglesEstudianteActivoV1')||'').trim(); }catch(e){}
-    var main=document.querySelector('main.content');
-    var zona=document.querySelector('.zona-estudiante');
-    var menu=document.getElementById('menu-estudiante-logueado');
-    var fila=document.querySelector('.fila-modos-aprendizaje');
-    var practica=document.getElementById('panel-practica');
-    var evaluacion=document.getElementById('panel-evaluacion');
-    var cont=document.getElementById('contenedor-tarjetas');
-    var titulo=document.getElementById('titulo-tema');
-    var badge=document.getElementById('bienvenida-insignia-2026');
-
-    if(main){
-      main.classList.remove('inicio-bienvenida','vista-evaluacion-definitiva');
-      main.style.setProperty('display','block','important');
-      main.style.setProperty('visibility','visible','important');
-      main.style.setProperty('opacity','1','important');
-    }
-    document.body.classList.remove('pantalla-inicio','vista-chat-solo');
-    document.querySelectorAll('main.content .tema').forEach(function(el){
-      el.style.setProperty('display','none','important');
-      el.style.setProperty('visibility','hidden','important');
-      el.style.setProperty('opacity','0','important');
-    });
-    ['tema-misDiplomas','tema-foroPresentacion','tema-registroEstudiante','tema-chat','tema-notaDocente'].forEach(function(id){
-      var el=document.getElementById(id);
-      if(el){el.style.setProperty('display','none','important');el.style.setProperty('visibility','hidden','important');}
-    });
-    [fila,practica,evaluacion,cont,titulo].forEach(function(el){
-      if(el)el.style.setProperty('display','none','important');
-    });
-    if(zona){
-      zona.classList.add('estudiante-logueado');
-      zona.classList.remove('progreso-solo-2026','progreso-arriba-2026');
-      zona.style.setProperty('display','flex','important');
-      zona.style.setProperty('visibility','visible','important');
-      zona.style.setProperty('opacity','1','important');
-      zona.style.setProperty('pointer-events','auto','important');
-    }
-    var activo=document.getElementById('estudiante-activo');
-    if(activo)activo.textContent=nombre?'👤 Estudiante activo: '+nombre:'👤 Selecciona un estudiante';
-    if(menu){
-      menu.style.setProperty('display',nombre?'flex':'none','important');
-      menu.style.setProperty('visibility',nombre?'visible':'hidden','important');
-      menu.style.setProperty('opacity',nombre?'1':'0','important');
-      menu.style.setProperty('pointer-events',nombre?'auto':'none','important');
-    }
-    if(badge && nombre){
-      badge.style.setProperty('display','block','important');
-      badge.style.setProperty('visibility','visible','important');
-      badge.style.setProperty('opacity','1','important');
-    }
-    window.scrollTo(0,0);
-    return false;
-  };
-})();
-</script></body>
+</script>\n</body>
 \n<style id="FIX-ESTUDIANTE-VISIBLE-2026">
 /* Corrección final: el acceso Estudiante debe quedar siempre visible al pulsar el botón. */
 .zona-estudiante.acceso-estudiante-visible-2026{
@@ -11888,195 +11680,50 @@ body.modo-estudio-estudiante-v2 main.content{
   }
 })();
 </script>
-<script id="fix-progreso-evaluacion-21-firebase-andres-soraya-js">
+<script id="fix-progreso-evaluacion-20-js">
 (function(){
   'use strict';
-
-  function norm(v){
-    return String(v||'').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ');
-  }
-  function safe(v){
-    return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});
-  }
-  function dbOk(){return !!(window.db && typeof window.db.collection==='function');}
-  function nombreActivo(){
-    try{return String(typeof obtenerNombreEstudiante==='function'?obtenerNombreEstudiante():'').trim();}catch(e){return '';}
-  }
-  function temaNombre(cat){
-    try{return (typeof nombresTemas==='object' && nombresTemas && nombresTemas[cat]) ? nombresTemas[cat] : cat;}catch(e){return cat;}
-  }
-
-  // Evaluación 1: guarda el resultado en Firebase sin crear duplicados ciegamente.
-  // Si el mismo estudiante ya tiene una Evaluación 1 para el mismo tema, se actualiza
-  // ese registro. No se borran los registros antiguos que ya existían.
-  window.guardarResultadoEvaluacionHistorial = async function(categoria, correctas, total, porcentaje, nota, errores){
-    const data = (typeof obtenerProgresoGuardado==='function' ? (obtenerProgresoGuardado()||{}) : {});
-    const ahora=Date.now();
-    data.evaluaciones=Array.isArray(data.evaluaciones)?data.evaluaciones:[];
-    data.evaluaciones.unshift({
-      id:ahora,
-      fecha:new Date(ahora).toLocaleString('es-CO',{dateStyle:'short',timeStyle:'short'}),
-      categoria,
-      tema:categoria==='general'?'Evaluación General':temaNombre(categoria),
-      correctas,total,porcentaje,nota,
-      aprobada:(typeof evaluacionAprobada==='function'?evaluacionAprobada({porcentaje,nota}):Number(nota||0)>=3)
-    });
-    data.evaluaciones=data.evaluaciones.slice(0,30);
-    data.errores=(errores||[]).slice(0,20).map((e,i)=>({id:ahora+i,tema:e.tema,categoria:e.categoria,pregunta:e.pregunta,correcta:e.correcta,respuesta:e.respuesta}));
-    if(typeof guardarProgresoGuardado==='function') guardarProgresoGuardado(data);
-
-    let nube=false;
-    try{
-      const estudiante=nombreActivo();
-      if(dbOk() && estudiante){
-        const col=window.db.collection('resultados');
-        const tema= categoria==='general'?'Evaluación General':temaNombre(categoria);
-        const base={
-          estudiante,
-          nombre:estudiante,
-          actividad:'Evaluación 1 — Evaluación tradicional',
-          tema,
-          categoria,
-          resultado:`${porcentaje}/100`,
-          puntos:Number(porcentaje)||0,
-          nota:Number(nota)||0,
-          porcentaje:Number(porcentaje)||0,
-          correctas:Number(correctas)||0,
-          total:Number(total)||0,
-          fecha:new Date().toLocaleString('es-CO'),
-          fechaISO:new Date().toISOString(),
-          evaluacion:'Evaluación 1',
-          tipo:'evaluacion1'
-        };
-        const snap=await col.where('estudiante','==',estudiante).where('tipo','==','evaluacion1').get();
-        let candidato=null;
-        snap.forEach(function(doc){
-          const d=doc.data()||{};
-          const dc=String(d.categoria||'').trim();
-          const dt=String(d.tema||'').trim();
-          if(!candidato && (dc===String(categoria||'').trim() || dt===String(tema).trim())) candidato=doc;
-        });
-        if(candidato) await col.doc(candidato.id).set(base,{merge:true});
-        else await col.add(base);
-        nube=true;
-      }
-    }catch(e){console.error('No se pudo sincronizar la Evaluación 1 con Firebase:',e);}
-    return nube;
-  };
-
-  // Lee Evaluación 1 desde Firebase para que Andrés, Soraya y cualquier otro
-  // estudiante puedan ver su resultado desde otro computador/dispositivo.
-  async function obtenerEvaluacionesFirebase(nombre){
-    if(!dbOk() || !nombre) return [];
-    try{
-      const snap=await window.db.collection('resultados').where('estudiante','==',nombre).get();
-      const out=[];
-      snap.forEach(function(doc){
-        const d=doc.data()||{};
-        const tipo=String(d.tipo||'').toLowerCase();
-        if(tipo==='evaluacion1' || tipo==='actividad2') out.push(Object.assign({},d,{_docId:doc.id}));
-      });
-      return out;
-    }catch(e){console.error('Error consultando evaluaciones Firebase:',e);return [];}
-  }
-
-  function unirYDeduplicar(local,firebase){
-    const arr=[]; const seen={};
-    (firebase||[]).concat(local||[]).forEach(function(e){
-      if(!e) return;
-      const tipo=String(e.tipo||'evaluacion1').toLowerCase();
-      const cat=String(e.categoria||e.tema||'').trim().toLowerCase();
-      const key=tipo+'|'+cat;
-      const prev=seen[key];
-      if(!prev){seen[key]=e;arr.push(e);return;}
-      const t1=Date.parse(e.fechaISO||'')||Number(e.id)||0;
-      const t2=Date.parse(prev.fechaISO||'')||Number(prev.id)||0;
-      if(t1>=t2){const i=arr.indexOf(prev);if(i>=0)arr[i]=e;seen[key]=e;}
-    });
-    return arr;
-  }
-
   window.mostrarPanelProgreso=function(){
     var cont=document.getElementById('contenedor-tarjetas');
     if(!cont)return false;
-    var nombre=nombreActivo();
+    var nombre='';
+    try{nombre=String(typeof obtenerNombreEstudiante==='function'?obtenerNombreEstudiante():'').trim();}catch(e){}
     var main=document.querySelector('main.content');
-    if(main){
-      main.style.display='flex';
-      main.style.visibility='visible';
-      main.style.opacity='1';
-      main.classList.remove('inicio-bienvenida');
-    }
+    if(main){main.style.display='flex';main.classList.remove('inicio-bienvenida');}
     document.querySelectorAll('.tema').forEach(function(el){el.style.display='none';});
     var zona=document.querySelector('.zona-estudiante');if(zona)zona.style.display='none';
     var fila=document.querySelector('.fila-modos-aprendizaje');if(fila)fila.style.display='none';
     var dip=document.getElementById('tema-misDiplomas');if(dip)dip.style.display='none';
-    cont.style.display='block';
-    cont.style.visibility='visible';
-    cont.style.opacity='1';
+    cont.style.display='block';cont.style.visibility='visible';cont.style.opacity='1';
     cont.className='panel-dashboard progreso-vista-completa';
-
     if(!nombre){
       cont.innerHTML='<section class="progreso-hero"><h1>📝 Progreso de evaluación</h1><p>Primero entra como estudiante.</p><button type="button" class="btn-iniciar-evaluacion" onclick="irAccesoEstudiante()">👨‍🎓 Entrar como estudiante</button></section>';
       return false;
     }
-
-    /* Renderizar INMEDIATAMENTE desde el historial local. No esperamos Firebase
-       para mostrar las barras ni permitimos que una consulta lenta deje la vista en blanco. */
-    var local={evaluaciones:[]};
-    try{local=typeof obtenerProgresoGuardado==='function'?(obtenerProgresoGuardado()||local):local;}catch(e){console.warn('No se pudo leer el progreso local:',e);}
-    var localEv=[];
-    try{localEv=typeof registrosDeEvaluacion==='function'?registrosDeEvaluacion(local.evaluaciones||[]):(local.evaluaciones||[]);}catch(e){localEv=local.evaluaciones||[];}
-
-    function renderEvaluaciones(ev, origen){
-      ev=Array.isArray(ev)?ev:[];
-      var temas=(typeof nombresTemas==='object'&&nombresTemas)?nombresTemas:{};
-      var porTema={};
-      ev.forEach(function(e){
-        if(!e)return;
-        var tipo=String(e.tipo||'evaluacion1').toLowerCase();
-        if(tipo==='actividad2')return;
-        var cat=String(e.categoria||'').trim();
-        if(!cat||cat==='general')return;
-        var anterior=porTema[cat];
-        var et=Date.parse(e.fechaISO||'')||Number(e.id)||0;
-        var at=anterior?(Date.parse(anterior.fechaISO||'')||Number(anterior.id)||0):0;
-        if(!anterior||et>=at)porTema[cat]=e;
-      });
-      function fila(cat){
-        var e=porTema[cat];
-        if(!e)return '<div class="estado-tema-row pendiente"><div class="estado-tema-nombre"><strong>'+safe(temaNombre(cat))+'</strong></div><div class="estado-tema-datos"><div class="estado-tema-barra"><span style="width:0%"></span></div><div class="estado-tema-estado">⏳ Falta</div></div><div class="estado-tema-nota">Pendiente</div></div>';
-        var pct=Math.max(0,Math.min(100,Number(e.porcentaje||0)));
-        var ok=false;try{ok=typeof evaluacionAprobada==='function'?evaluacionAprobada(e):Number(e.nota||0)>=3;}catch(x){ok=Number(e.nota||0)>=3;}
-        return '<div class="estado-tema-row '+(ok?'aprobada':'reprobada')+'"><div class="estado-tema-nombre"><strong>'+safe(temaNombre(cat))+'</strong></div><div class="estado-tema-datos"><div class="estado-tema-barra"><span style="width:'+pct+'%"></span></div><div class="estado-tema-estado">'+(ok?'🔵 Aprobada':'🔴 No aprobada')+' · '+safe(e.fecha||'')+'</div></div><div class="estado-tema-nota">'+Number(e.nota||0).toFixed(1)+' / 5</div></div>';
-      }
-      var keys=Object.keys(temas);
-      var rows=keys.map(fila).join('');
-      var realizadas=Object.values(porTema);
-      var ganadas=realizadas.filter(function(e){try{return typeof evaluacionAprobada==='function'?evaluacionAprobada(e):Number(e.nota||0)>=3;}catch(x){return Number(e.nota||0)>=3;}}).length;
-      var perdidas=realizadas.length-ganadas;
-      var pendientes=Math.max(0,keys.length-realizadas.length);
-      var puntosDiplomas=0;try{puntosDiplomas=typeof calcularPuntosDesdeHistorial==='function'?calcularPuntosDesdeHistorial(ev):0;}catch(x){}
-      cont.innerHTML='<section class="progreso-hero"><h1>📝 Progreso de evaluación</h1><p><strong>'+safe(nombre)+'</strong>, aquí puedes ver tus barras de progreso de evaluación.</p><div style="margin:14px 0 20px;text-align:left;"><button type="button" class="btn-iniciar-evaluacion btn-regreso-progreso-evaluacion" onclick="return regresarAlMenuEstudiante();">↩️ Panel estudiante</button></div><div class="tarjetas-resumen-dashboard progreso-resumen"><div class="tarjeta-dashboard"><span>📝</span><strong>'+keys.length+'</strong><small>Total evaluaciones</small></div><div class="tarjeta-dashboard"><span>🔵</span><strong>'+ganadas+'</strong><small>Aprobadas</small></div><div class="tarjeta-dashboard"><span>🔴</span><strong>'+perdidas+'</strong><small>No aprobadas</small></div><div class="tarjeta-dashboard"><span>⏳</span><strong>'+pendientes+'</strong><small>Pendientes</small></div></div></section><section class="tarjeta-panel estado-tus-temas"><h2>📊 Barras de progreso de evaluación</h2><p>🔵 Azul = aprobada · 🔴 Rojo = no aprobada · ⏳ Pendiente.</p><div class="estado-temas-lista">'+rows+'</div></section>';
-      cont.scrollIntoView({behavior:'smooth',block:'start'});
-    }
-
-    /* Primero muestra las barras locales, sin esperar red. */
-    renderEvaluaciones(localEv,'local');
-    window.scrollTo({top:0,behavior:'smooth'});
-
-    /* Después sincroniza con Firebase y reemplaza solo si llegan datos válidos. */
-    if(typeof obtenerEvaluacionesFirebase==='function'){
-      obtenerEvaluacionesFirebase(nombre).then(function(nube){
-        if(Array.isArray(nube)&&nube.length){
-          var combinado=unirYDeduplicar(localEv,nube);
-          renderEvaluaciones(combinado,'firebase');
-        }
-      }).catch(function(err){console.warn('Firebase no disponible para progreso; se conserva el progreso local.',err);});
-    }
-    return false;
+    var data={evaluaciones:[]};
+    try{data=obtenerProgresoGuardado()||data;}catch(e){}
+    var ev=[];
+    try{ev=typeof registrosDeEvaluacion==='function'?registrosDeEvaluacion(data.evaluaciones||[]):(data.evaluaciones||[]);}catch(e){ev=data.evaluaciones||[];}
+    var temas=(typeof nombresTemas==='object'&&nombresTemas)?nombresTemas:{};
+    var porTema={};
+    ev.forEach(function(e){if(!e||!e.categoria||e.categoria==='general')return;var a=porTema[e.categoria];if(!a||Number(e.id||0)>=Number(a.id||0))porTema[e.categoria]=e;});
+    function safe(v){try{return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}catch(e){return ''}}
+    var keys=Object.keys(temas);
+    var rows=keys.map(function(cat){
+      var e=porTema[cat];
+      if(!e)return '<div class="estado-tema-row pendiente"><div class="estado-tema-nombre"><strong>'+safe(temas[cat])+'</strong></div><div class="estado-tema-datos"><div class="estado-tema-barra"><span style="width:0%"></span></div><div class="estado-tema-estado">⏳ Falta</div></div><div class="estado-tema-nota">Pendiente</div></div>';
+      var pct=Math.max(0,Math.min(100,Number(e.porcentaje||0)));
+      var ok=false;try{ok=typeof evaluacionAprobada==='function'?evaluacionAprobada(e):Number(e.nota||0)>=3;}catch(x){ok=Number(e.nota||0)>=3;}
+      return '<div class="estado-tema-row '+(ok?'aprobada':'reprobada')+'"><div class="estado-tema-nombre"><strong>'+safe(temas[cat])+'</strong></div><div class="estado-tema-datos"><div class="estado-tema-barra"><span style="width:'+pct+'%"></span></div><div class="estado-tema-estado">'+(ok?'🔵 Aprobada':'🔴 No aprobada')+' · '+safe(e.fecha||'')+'</div></div><div class="estado-tema-nota">'+Number(e.nota||0).toFixed(1)+' / 5</div></div>';
+    }).join('');
+    var realizadas=Object.values(porTema);
+    var ganadas=realizadas.filter(function(e){try{return typeof evaluacionAprobada==='function'?evaluacionAprobada(e):Number(e.nota||0)>=3;}catch(x){return Number(e.nota||0)>=3;}}).length;
+    var perdidas=realizadas.length-ganadas;
+    var puntosDiplomas=0;
+    try{puntosDiplomas=typeof calcularPuntosDesdeHistorial==='function'?calcularPuntosDesdeHistorial(ev):0;}catch(x){puntosDiplomas=0;}
+    cont.innerHTML='<section class="progreso-hero"><h1>📝 Progreso de evaluación</h1><p><strong>'+safe(nombre)+'</strong>, este panel muestra únicamente tus evaluaciones.</p><div style="margin:14px 0 20px;text-align:left;"><button type="button" class="btn-iniciar-evaluacion btn-regreso-progreso-evaluacion" onclick="return regresarAlMenuEstudiante();">↩️ Regresar al espacio principal del estudiante</button></div><div class="tarjetas-resumen-dashboard progreso-resumen"><div class="tarjeta-dashboard"><span>📝</span><strong>'+keys.length+'</strong><small>Total evaluaciones</small></div><div class="tarjeta-dashboard"><span>🔵</span><strong>'+ganadas+'</strong><small>Aprobadas</small></div><div class="tarjeta-dashboard"><span>🔴</span><strong>'+perdidas+'</strong><small>No aprobadas</small></div><div class="tarjeta-dashboard"><span>⏳</span><strong>'+Math.max(0,keys.length-realizadas.length)+'</strong><small>Pendientes</small></div><div class="tarjeta-dashboard"><span>🏆</span><strong>'+puntosDiplomas+'</strong><small>Puntos para diplomas</small></div></div></section><section class="tarjeta-panel estado-tus-temas"><h2>📊 Estado de las evaluaciones</h2><p>🔵 Azul = aprobada · 🔴 Rojo = no aprobada.</p><div class="estado-temas-lista">'+rows+'</div></section>';
+    cont.scrollIntoView({behavior:'smooth',block:'start'});window.scrollTo({top:0,behavior:'smooth'});return false;
   };
-  window.obtenerEvaluacionesFirebase=obtenerEvaluacionesFirebase;
 })();
 </script>
 <!-- CORRECCIÓN FINAL LIMPIA: ACCESO ESTUDIANTE + TAMAÑO DIPLOMAS 2026 -->
@@ -12309,18 +11956,13 @@ window.guardarNotaDocente=async function(){
 function instalar(){
   const map=[
     ['#btn-estudiante-superior',()=>window.irAccesoEstudiante&&window.irAccesoEstudiante()],
-    /* Los botones del panel estudiante siguen este orden real:
-       1 Estudiar, 2 Práctica, 3 Progreso práctica,
-       4 Evaluación, 5 Progreso evaluación, 6 Insignias, 7 Diplomas. */
-    ['#menu-estudiante-logueado button:nth-of-type(1)',()=>window.mostrarEstudiarEstudiante&&window.mostrarEstudiarEstudiante()],
+    ['#menu-estudiante-logueado button:nth-of-type(1)',()=>window.mostrarModoDesdeEspacioEstudiante&&window.mostrarModoDesdeEspacioEstudiante('evaluacion')],
     ['#menu-estudiante-logueado button:nth-of-type(2)',()=>window.mostrarModoDesdeEspacioEstudiante&&window.mostrarModoDesdeEspacioEstudiante('practica')],
-    ['#menu-estudiante-logueado button:nth-of-type(3)',()=>window.mostrarPanelProgresoPractica&&window.mostrarPanelProgresoPractica()],
-    ['#menu-estudiante-logueado button:nth-of-type(4)',()=>window.mostrarModoDesdeEspacioEstudiante&&window.mostrarModoDesdeEspacioEstudiante('evaluacion')],
-    ['#menu-estudiante-logueado button:nth-of-type(5)',()=>window.mostrarPanelProgreso&&window.mostrarPanelProgreso()],
-    ['#menu-estudiante-logueado button:nth-of-type(6)',()=>window.mostrarInsigniasPractica&&window.mostrarInsigniasPractica()],
-    ['#menu-estudiante-logueado button:nth-of-type(7)',()=>window.mostrarDiplomas&&window.mostrarDiplomas()]
+    ['#menu-estudiante-logueado button:nth-of-type(3)',()=>window.mostrarPanelProgreso&&window.mostrarPanelProgreso()],
+    ['#menu-estudiante-logueado button:nth-of-type(4)',()=>window.mostrarPanelProgresoPractica&&window.mostrarPanelProgresoPractica()],
+    ['#menu-estudiante-logueado button:nth-of-type(6)',()=>window.mostrarInsigniasPractica&&window.mostrarInsigniasPractica()]
   ];
-  map.forEach(([sel,fn])=>{const b=document.querySelector(sel);if(b)b.addEventListener('click',e=>{e.preventDefault();e.stopImmediatePropagation();fn()},true)});
+  map.forEach(([sel,fn])=>{const b=document.querySelector(sel);if(b)b.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();fn()},true)});
   document.querySelectorAll('.zona-estudiante').forEach(z=>z.addEventListener('click',e=>{
     const li=e.target.closest('li');if(!li)return;const t=(li.textContent||'').trim();
     if(/Formulario/i.test(t)){e.preventDefault();e.stopPropagation();window.mostrarPresentarse()}
@@ -12611,12 +12253,7 @@ body.vista-chat-solo #btn-estudiante-superior,body.vista-chat-solo #estudiante-a
       return '<article class="insignia-real-card '+(ok?'desbloqueada':'bloqueada')+'"><img src="data:image/png;base64,'+it.img+'" alt="Insignia '+it.meta+' puntos"><h3>'+(ok?'🏅':'🔒')+' '+it.nombre+'</h3><div class="meta-insignia">'+it.meta+' puntos de práctica</div><p>'+(ok?'Insignia desbloqueada.':'Te faltan '+Math.max(0,Number(it.meta)-p)+' puntos para desbloquearla.')+'</p>'+(ok?(claimed?'<button type="button" class="btn-insignia-real descargar" onclick="descargarInsigniaReal2026('+it.meta+')">⬇️ Descargar insignia</button>':'<button type="button" class="btn-insignia-real reclamar" onclick="reclamarInsigniaReal2026('+it.meta+')">🎁 Reclamar insignia</button>'):'<button type="button" class="btn-insignia-real" disabled>🔒 Bloqueada</button>')+'</article>';
     }).join('');
     cont.innerHTML='<section class="progreso-hero"><h1>🏅 Mis insignias</h1><p><strong>'+String(n).replace(/[&<>"']/g,'')+'</strong>, estas insignias pertenecen únicamente a tu cuenta.</p><p style="font-size:1.2rem;font-weight:900">⭐ Puntos de práctica: '+p+'</p><div style="margin:12px 0 20px"><button type="button" class="btn-iniciar-evaluacion" onclick="regresarAlMenuEstudiante()">↩️ Regresar al espacio del estudiante</button></div></section><section class="tarjeta-panel" style="padding:22px"><div class="insignias-reales-grid">'+cards+'</div></section>';
-    // Llevar automáticamente al contenido de insignias para que el estudiante
-    // no tenga que desplazarse manualmente para verlo.
-    cont.style.scrollMarginTop='95px';
-    cont.scrollIntoView({behavior:'smooth',block:'start'});
-    window.scrollTo({top:0,behavior:'smooth'});
-    return false;
+    window.scrollTo({top:0,behavior:'smooth'});return false;
   };
 
   /* Reaplicar la navegación cuando la página termina de cargar. */
@@ -14166,7 +13803,7 @@ body.vista-chat-solo #btn-estudiante-superior,body.vista-chat-solo #estudiante-a
 
   async function presence(){
     const d=dbx(), out={};if(!d)return out;
-    try{const snap=await d.collection('chatPresencia').get();const now=Date.now();snap.forEach(doc=>{const x=doc.data()||{};const ts=Number(x.ts||0);out[doc.id]={...x,online:ts>0 && (now-ts)<35000}})}catch(e){console.warn('Chat: presencia',e)}
+    try{const snap=await d.collection('chatPresencia').get();const now=Date.now();snap.forEach(doc=>{const x=doc.data()||{};const ts=Number(x.ts||0);out[doc.id]={...x,online:x.online===true||(x.online!==false&&ts>0&&now-ts<35000)}})}catch(e){console.warn('Chat: presencia',e)}
     return out;
   }
 
@@ -14347,451 +13984,5 @@ body.vista-chat-solo #btn-estudiante-superior,body.vista-chat-solo #estudiante-a
 })();
 </script>
 
-
-
-<style id="vista-evaluacion-definitiva-2026">
-/* Estado único para la pantalla de evaluación: nunca permite que el panel
-   del estudiante, insignias, diplomas o tarjetas del dashboard queden detrás. */
-main.content.vista-evaluacion-definitiva .zona-estudiante,
-main.content.vista-evaluacion-definitiva #menu-estudiante-logueado,
-main.content.vista-evaluacion-definitiva #bienvenida-insignia-2026,
-main.content.vista-evaluacion-definitiva #contenedor-tarjetas,
-main.content.vista-evaluacion-definitiva #titulo-tema,
-main.content.vista-evaluacion-definitiva .tema,
-main.content.vista-evaluacion-definitiva #tema-misDiplomas {
-  display:none !important;
-  visibility:hidden !important;
-  opacity:0 !important;
-  pointer-events:none !important;
-}
-main.content.vista-evaluacion-definitiva .fila-modos-aprendizaje {
-  display:block !important;
-  visibility:visible !important;
-  opacity:1 !important;
-}
-main.content.vista-evaluacion-definitiva #panel-evaluacion {
-  display:flex !important;
-  visibility:visible !important;
-  opacity:1 !important;
-}
-</style>
-<script id="navegacion-evaluacion-definitiva-2026">
-(function(){
-  'use strict';
-  var MAIN_SEL='main.content';
-  function main(){ return document.querySelector(MAIN_SEL); }
-  function limpiarVistasAnteriores(){
-    document.querySelectorAll('.tema').forEach(function(el){
-      el.style.setProperty('display','none','important');
-      el.style.setProperty('visibility','hidden','important');
-      el.style.setProperty('opacity','0','important');
-    });
-    var d=document.getElementById('tema-misDiplomas');
-    if(d)d.style.setProperty('display','none','important');
-    var zona=document.querySelector('.zona-estudiante');
-    if(zona){
-      zona.style.setProperty('display','none','important');
-      zona.style.setProperty('visibility','hidden','important');
-      zona.style.setProperty('opacity','0','important');
-    }
-    var menu=document.getElementById('menu-estudiante-logueado');
-    if(menu)menu.style.setProperty('display','none','important');
-    var badge=document.getElementById('bienvenida-insignia-2026');
-    if(badge)badge.style.setProperty('display','none','important');
-    var cont=document.getElementById('contenedor-tarjetas');
-    if(cont){
-      cont.style.setProperty('display','none','important');
-      cont.style.setProperty('visibility','hidden','important');
-      cont.style.setProperty('opacity','0','important');
-    }
-    var titulo=document.getElementById('titulo-tema');
-    if(titulo)titulo.style.setProperty('display','none','important');
-  }
-  function activarEstadoEvaluacion(){
-    var m=main();
-    if(!m)return;
-    m.classList.remove('inicio-bienvenida');
-    m.classList.add('vista-evaluacion-definitiva');
-    m.style.setProperty('display','flex','important');
-    m.style.setProperty('visibility','visible','important');
-    m.style.setProperty('opacity','1','important');
-    limpiarVistasAnteriores();
-    var fila=document.querySelector('.fila-modos-aprendizaje');
-    if(fila){
-      fila.style.setProperty('display','block','important');
-      fila.style.setProperty('visibility','visible','important');
-      fila.style.setProperty('opacity','1','important');
-    }
-    var practica=document.getElementById('panel-practica');
-    if(practica)practica.style.setProperty('display','none','important');
-    var evalp=document.getElementById('panel-evaluacion');
-    if(evalp){
-      evalp.hidden=false;
-      evalp.removeAttribute('hidden');
-      evalp.style.setProperty('display','flex','important');
-      evalp.style.setProperty('visibility','visible','important');
-      evalp.style.setProperty('opacity','1','important');
-    }
-    var bp=document.getElementById('btn-modo-practica');
-    var be=document.getElementById('btn-modo-evaluacion');
-    if(bp)bp.classList.remove('activo');
-    if(be)be.classList.add('activo');
-  }
-  function salirEstadoEvaluacion(){
-    var m=main();
-    if(m)m.classList.remove('vista-evaluacion-definitiva');
-  }
-
-  /* Una sola entrada oficial a Evaluación, desde cualquier pantalla. */
-  var oldEval=window.mostrarPanelEvaluacionSeguro;
-  window.mostrarPanelEvaluacionSeguro=function(ev){
-    if(ev){try{ev.preventDefault();ev.stopImmediatePropagation();}catch(e){}}
-    activarEstadoEvaluacion();
-    try{ if(typeof actualizarResumenEvaluacionPanel==='function') actualizarResumenEvaluacionPanel(); }catch(e){}
-    var selector=document.getElementById('select-evaluacion');
-    if(selector){
-      selector.disabled=false;
-      setTimeout(function(){
-        try{selector.scrollIntoView({behavior:'smooth',block:'center'});}catch(e){}
-      },80);
-    }
-    return false;
-  };
-  window.mostrarPanelEvaluacionSeguro.__vistaEvaluacionDefinitiva=true;
-
-  /* El selector de modo también pasa por la misma entrada, para que no exista
-     otra ruta que vuelva a mostrar el dashboard debajo. */
-  window.seleccionarModo=function(modo){
-    if(modo==='evaluacion') return window.mostrarPanelEvaluacionSeguro();
-    salirEstadoEvaluacion();
-    var m=main();
-    if(m){m.classList.remove('inicio-bienvenida');m.style.display='flex';m.style.visibility='visible';m.style.opacity='1';}
-    limpiarVistasAnteriores();
-    var fila=document.querySelector('.fila-modos-aprendizaje');
-    var practica=document.getElementById('panel-practica');
-    var evalp=document.getElementById('panel-evaluacion');
-    if(fila)fila.style.setProperty('display','block','important');
-    if(evalp)evalp.style.setProperty('display','none','important');
-    if(practica){practica.style.setProperty('display','flex','important');practica.style.visibility='visible';practica.style.opacity='1';}
-    var bp=document.getElementById('btn-modo-practica');if(bp)bp.classList.add('activo');
-    var be=document.getElementById('btn-modo-evaluacion');if(be)be.classList.remove('activo');
-    return false;
-  };
-
-  /* El botón del panel estudiante queda apuntando a la entrada oficial. */
-  window.mostrarModoDesdeEspacioEstudiante=function(modo){
-    if(modo==='evaluacion') return window.mostrarPanelEvaluacionSeguro();
-    var n='';try{n=String(typeof obtenerNombreEstudiante==='function'?obtenerNombreEstudiante():'').trim();}catch(e){}
-    if(!n){alert('Primero entra como estudiante con tu nombre y PIN.');return false;}
-    return window.seleccionarModo('practica');
-  };
-
-  /* Al regresar al espacio del estudiante se quita el estado exclusivo. */
-  var oldReturn=window.regresarAlMenuEstudiante;
-  if(typeof oldReturn==='function'&&!oldReturn.__vistaEvalFinal){
-    var f=function(){
-      salirEstadoEvaluacion();
-      var r=oldReturn.apply(this,arguments);
-      setTimeout(salirEstadoEvaluacion,0);
-      return r;
-    };
-    f.__vistaEvalFinal=true;
-    window.regresarAlMenuEstudiante=f;
-  }
-})();
-</script>
-
 </body>
 </html>
-
-<!-- ===== NAVEGACION UNIFICADA FINAL: CADA VISTA ES EXCLUSIVA ===== -->
-<script id="navegacion-unificada-final-2026">
-(function(){
-  'use strict';
-  if(window.__navegacionUnificadaFinal2026) return;
-  window.__navegacionUnificadaFinal2026=true;
-
-  function main(){ return document.querySelector('main.content'); }
-  function hide(el){
-    if(!el) return;
-    el.style.setProperty('display','none','important');
-    el.style.setProperty('visibility','hidden','important');
-    el.style.setProperty('opacity','0','important');
-    el.style.setProperty('pointer-events','none','important');
-  }
-  function show(el, display){
-    if(!el) return;
-    el.style.setProperty('display',display||'block','important');
-    el.style.setProperty('visibility','visible','important');
-    el.style.setProperty('opacity','1','important');
-    el.style.removeProperty('pointer-events');
-  }
-  function hideAllTopics(){
-    document.querySelectorAll('main.content .tema').forEach(hide);
-    ['tema-misDiplomas','tema-foroPresentacion','tema-registroEstudiante','tema-chat','tema-notaDocente'].forEach(function(id){ hide(document.getElementById(id)); });
-  }
-  function base(){
-    var m=main();
-    if(m){
-      m.classList.remove('inicio-bienvenida','vista-evaluacion-definitiva');
-      show(m,'block');
-    }
-    hideAllTopics();
-    hide(document.getElementById('titulo-tema'));
-    hide(document.getElementById('bienvenida-insignia-2026'));
-    return m;
-  }
-  function hideStudentDashboard(){
-    hide(document.querySelector('.zona-estudiante'));
-    hide(document.getElementById('menu-estudiante-logueado'));
-    hide(document.getElementById('contenedor-tarjetas'));
-  }
-  function showStudentDashboard(){
-    /* Regreso COMPLETO al espacio del estudiante.
-       No se reutiliza base() aquí porque otras rutinas antiguas pueden dejar
-       clases/estilos de progreso que vuelven a ocultar el menú. */
-    var m=main();
-    var body=document.body;
-    var zona=document.querySelector('.zona-estudiante');
-    var menu=document.getElementById('menu-estudiante-logueado');
-    var cont=document.getElementById('contenedor-tarjetas');
-    var fila=document.querySelector('.fila-modos-aprendizaje');
-    var practica=document.getElementById('panel-practica');
-    var evaluacion=document.getElementById('panel-evaluacion');
-    var titulo=document.getElementById('titulo-tema');
-    var badge=document.getElementById('bienvenida-insignia-2026');
-
-    if(body){
-      body.classList.remove('pantalla-inicio','vista-chat-solo');
-    }
-    if(m){
-      m.classList.remove('inicio-bienvenida','vista-evaluacion-definitiva');
-      m.style.setProperty('display','block','important');
-      m.style.setProperty('visibility','visible','important');
-      m.style.setProperty('opacity','1','important');
-    }
-
-    /* Cerrar TODAS las vistas secundarias. */
-    document.querySelectorAll('main.content .tema').forEach(function(el){ hide(el); });
-    ['tema-misDiplomas','tema-foroPresentacion','tema-registroEstudiante','tema-chat','tema-notaDocente'].forEach(function(id){ hide(document.getElementById(id)); });
-    hide(fila);
-    hide(practica);
-    hide(evaluacion);
-    if(titulo) hide(titulo);
-
-    if(cont){
-      cont.innerHTML='';
-      cont.className='panel-dashboard';
-      hide(cont);
-    }
-
-    var n='';
-    try{ n=String((typeof obtenerNombreEstudiante==='function'?obtenerNombreEstudiante():'')||'').trim(); }catch(e){}
-    if(!n){
-      try{ n=String(localStorage.getItem('aprendeInglesEstudianteActivoV1')||localStorage.getItem('estudianteActivo')||'').trim(); }catch(e){}
-    }
-
-    if(zona){
-      /* Esta clase es obligatoria: existe una regla CSS que oculta el menú
-         cuando .zona-estudiante NO está marcada como estudiante-logueado. */
-      zona.classList.remove('progreso-solo-2026','progreso-arriba-2026');
-      if(n) zona.classList.add('estudiante-logueado');
-      zona.style.setProperty('display','flex','important');
-      zona.style.setProperty('visibility','visible','important');
-      zona.style.setProperty('opacity','1','important');
-      zona.style.setProperty('pointer-events','auto','important');
-    }
-
-    var activo=document.getElementById('estudiante-activo');
-    if(activo) activo.textContent=n?'👤 Estudiante activo: '+n:'👤 Selecciona un estudiante';
-
-    if(menu && n){
-      menu.style.setProperty('display','flex','important');
-      menu.style.setProperty('visibility','visible','important');
-      menu.style.setProperty('opacity','1','important');
-      menu.style.setProperty('pointer-events','auto','important');
-    }
-
-    if(badge && n){
-      badge.style.setProperty('display','block','important');
-      badge.style.setProperty('visibility','visible','important');
-      badge.style.setProperty('opacity','1','important');
-      try{ if(typeof window.actualizarBienvenidaInsignia==='function') window.actualizarBienvenidaInsignia(); }catch(e){}
-    }
-
-    window.scrollTo({top:0,behavior:'smooth'});
-    return false;
-  }
-  function showSpecialView(){
-    base();
-    hideStudentDashboard();
-    var fila=document.querySelector('.fila-modos-aprendizaje');
-    hide(fila);
-    var cont=document.getElementById('contenedor-tarjetas');
-    if(cont){ cont.className='panel-dashboard progreso-vista-completa'; show(cont,'block'); }
-    return cont;
-  }
-  function showMode(mode){
-    base();
-    hideStudentDashboard();
-    var fila=document.querySelector('.fila-modos-aprendizaje');
-    var p=document.getElementById('panel-practica');
-    var e=document.getElementById('panel-evaluacion');
-    var cont=document.getElementById('contenedor-tarjetas');
-    hide(cont);
-    if(fila) show(fila,'block');
-    if(mode==='evaluacion'){
-      if(p) hide(p);
-      if(e) show(e,'flex');
-      if(typeof actualizarResumenEvaluacionPanel==='function'){
-        try{actualizarResumenEvaluacionPanel();}catch(err){}
-      }
-      var m=main(); if(m) m.classList.add('vista-evaluacion-definitiva');
-      var sel=document.getElementById('select-evaluacion');
-      if(sel) sel.disabled=false;
-    }else{
-      if(e) hide(e);
-      if(p) show(p,'flex');
-      var sp=document.getElementById('select-practica');
-      if(sp) sp.disabled=false;
-    }
-    return false;
-  }
-
-  /* Guardar las implementaciones que ya existen para conservar su contenido.
-     Solo se unifica el estado visual antes/después de cada navegación. */
-  var oldEval=window.mostrarPanelEvaluacionSeguro;
-  var oldSelect=window.seleccionarModo;
-  var oldPracticeProgress=window.mostrarPanelProgresoPractica;
-  var oldEvalProgress=window.mostrarPanelProgreso;
-  var oldInsignias=window.mostrarInsigniasPractica;
-  var oldDiplomas=window.mostrarDiplomas;
-
-  window.mostrarPanelEvaluacionSeguro=function(ev){
-    if(ev){try{ev.preventDefault();ev.stopImmediatePropagation();}catch(e){}}
-    return showMode('evaluacion');
-  };
-  window.abrirModoEvaluacion=window.mostrarPanelEvaluacionSeguro;
-
-  window.seleccionarModo=function(modo){
-    return showMode(modo==='evaluacion'?'evaluacion':'practica');
-  };
-
-  window.mostrarModoDesdeEspacioEstudiante=function(modo){
-    try{ if(!obtenerNombreEstudiante()){alert('Primero entra como estudiante con tu nombre y PIN.');return false;} }catch(e){}
-    return showMode(modo==='evaluacion'?'evaluacion':'practica');
-  };
-
-  window.mostrarPanelProgresoPractica=function(){
-    var c=showSpecialView();
-    try{ if(typeof oldPracticeProgress==='function') oldPracticeProgress.apply(this,arguments); }catch(e){ console.error(e); }
-    hideStudentDashboard(); hide(document.querySelector('.fila-modos-aprendizaje'));
-    if(c) show(c,'block');
-    return false;
-  };
-
-  window.mostrarPanelProgreso=function(){
-    var c=showSpecialView();
-    try{ if(typeof oldEvalProgress==='function') oldEvalProgress.apply(this,arguments); }catch(e){ console.error(e); }
-    hideStudentDashboard(); hide(document.querySelector('.fila-modos-aprendizaje'));
-    if(c) show(c,'block');
-    return false;
-  };
-
-  window.mostrarInsigniasPractica=function(){
-    var c=showSpecialView();
-    try{ if(typeof oldInsignias==='function') oldInsignias.apply(this,arguments); }catch(e){ console.error(e); }
-    hideStudentDashboard(); hide(document.querySelector('.fila-modos-aprendizaje'));
-    if(c) show(c,'block');
-    return false;
-  };
-
-  window.mostrarDiplomas=function(){
-    var c=showSpecialView();
-    try{ if(typeof oldDiplomas==='function') oldDiplomas.apply(this,arguments); }catch(e){ console.error(e); }
-    hideStudentDashboard(); hide(document.querySelector('.fila-modos-aprendizaje'));
-    var sec=document.getElementById('tema-misDiplomas');
-    if(sec) show(sec,'block');
-    if(c) hide(c);
-    return false;
-  };
-
-  window.regresarAlMenuEstudiante=function(){
-    return showStudentDashboard();
-  };
-  window.volverEspacioEstudianteReal=window.regresarAlMenuEstudiante;
-  window.regresarAlEspacioEstudiante=window.regresarAlMenuEstudiante;
-
-})();
-</script>
-
-<script id="regreso-evaluacion-directo-2026">
-(function(){
-  'use strict';
-  window.regresarDesdeEvaluacionDirecto=function(){
-    try{
-      var nombre='';
-      try{ nombre=String((typeof obtenerNombreEstudiante==='function'?obtenerNombreEstudiante():'')||'').trim(); }catch(e){}
-      if(!nombre){
-        try{nombre=String(localStorage.getItem('aprendeInglesEstudianteActivoV1')||localStorage.getItem('estudianteActivo')||'').trim();}catch(e){}
-      }
-      var main=document.querySelector('main.content');
-      var fila=document.querySelector('.fila-modos-aprendizaje');
-      var practica=document.getElementById('panel-practica');
-      var evaluacion=document.getElementById('panel-evaluacion');
-      var zona=document.querySelector('.zona-estudiante');
-      var menu=document.getElementById('menu-estudiante-logueado');
-      var cont=document.getElementById('contenedor-tarjetas');
-      var titulo=document.getElementById('titulo-tema');
-      var badge=document.getElementById('bienvenida-insignia-2026');
-      var body=document.body;
-
-      if(body){body.classList.remove('pantalla-inicio','vista-chat-solo');}
-      if(main){
-        main.classList.remove('inicio-bienvenida','vista-evaluacion-definitiva');
-        main.style.setProperty('display','block','important');
-        main.style.setProperty('visibility','visible','important');
-        main.style.setProperty('opacity','1','important');
-      }
-      document.querySelectorAll('main.content .tema').forEach(function(el){
-        el.style.setProperty('display','none','important');
-        el.style.setProperty('visibility','hidden','important');
-      });
-      ['tema-misDiplomas','tema-foroPresentacion','tema-registroEstudiante','tema-chat','tema-notaDocente'].forEach(function(id){
-        var el=document.getElementById(id); if(el){el.style.setProperty('display','none','important');el.style.setProperty('visibility','hidden','important');}
-      });
-      if(fila){fila.style.setProperty('display','none','important');fila.classList.remove('solo-practica','solo-evaluacion');}
-      if(practica){practica.style.setProperty('display','none','important');}
-      if(evaluacion){evaluacion.style.setProperty('display','none','important');}
-      if(cont){cont.innerHTML='';cont.className='panel-dashboard';cont.style.setProperty('display','none','important');}
-      if(titulo){titulo.style.setProperty('display','none','important');}
-      if(zona){
-        zona.classList.add('estudiante-logueado');
-        zona.classList.remove('progreso-solo-2026','progreso-arriba-2026');
-        zona.style.setProperty('display',nombre?'flex':'none','important');
-        zona.style.setProperty('visibility','visible','important');
-        zona.style.setProperty('opacity','1','important');
-        zona.style.setProperty('pointer-events','auto','important');
-      }
-      var activo=document.getElementById('estudiante-activo');
-      if(activo)activo.textContent=nombre?'👤 Estudiante activo: '+nombre:'👤 Selecciona un estudiante';
-      if(menu){
-        menu.style.setProperty('display',nombre?'flex':'none','important');
-        menu.style.setProperty('visibility',nombre?'visible':'hidden','important');
-        menu.style.setProperty('opacity',nombre?'1':'0','important');
-        menu.style.setProperty('pointer-events',nombre?'auto':'none','important');
-      }
-      if(badge && nombre){
-        badge.style.setProperty('display','block','important');
-        badge.style.setProperty('visibility','visible','important');
-        badge.style.setProperty('opacity','1','important');
-      }
-      window.scrollTo({top:0,behavior:'smooth'});
-    }catch(err){
-      console.error('Error al regresar al espacio del estudiante:',err);
-      try{ if(typeof window.regresarAlMenuEstudiante==='function') window.regresarAlMenuEstudiante(); }catch(e){}
-    }
-    return false;
-  };
-})();
-</script>
