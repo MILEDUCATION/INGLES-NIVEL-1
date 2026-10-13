@@ -997,6 +997,7 @@
     .foro-datos-publicados{display:flex;flex-direction:column;gap:8px;margin:14px 0}.foro-dato-publicado{display:flex;gap:8px;align-items:flex-start;padding:8px 10px;border-radius:8px;background:var(--bg-card);border:1px solid var(--borde-color)}.foro-dato-publicado strong{min-width:220px}.foro-dato-publicado span{font-weight:600}.foro-extra-publicado{margin:14px 0;padding:12px;border:1px solid var(--borde-color);border-radius:10px;background:var(--bg-card)}.foro-extra-publicado p{margin:8px 0 0}.foro-ingles-publicado{margin-top:14px}.foro-ingles-publicado h4{margin-top:0}.foro-idiomas{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 18px}.foro-idioma-btn{border:1px solid var(--borde-color);border-radius:10px;padding:9px 16px;background:#fff;cursor:pointer;font-weight:800}.foro-idioma-btn.activo{background:var(--color-acento);color:#fff}.foro-texto-es,.foro-texto-en{font-size:18px;line-height:1.75}.foro-texto-es.oculto,.foro-texto-en.oculto{display:none}
 
 
+</style>
 <style id="foro-una-sola-ventana">
 /* El área de contenido y el Foro ocupan el mismo espacio, nunca dos columnas independientes. */
 .main-container{display:flex;flex:1;overflow:hidden;min-height:0;}
@@ -1009,6 +1010,7 @@
   #tema-foroPresentacion .foro-presentacion{padding:14px;}
 }
 
+</style>
 <style id="foro-integrado-registro">
 /* Foro integrado: primero registro, luego presentación y finalmente compañeros/comentarios. */
 #tema-foroPresentacion .foro-presentacion{max-width:1050px;margin:0 auto;padding:18px 8px 50px;max-height:none;overflow:visible;}
@@ -1641,9 +1643,10 @@
 <div id="lista-estudiantes-docente"></div>
 </div>
 <div class="docente-form docente-resultados-actividades">
-<h3>📊 Resultados de actividades</h3>
-<p style="opacity:.75;">Consulta evaluaciones, Evaluación 2 y actividades interactivas registradas en Firebase.</p>
-<button class="btn-docente-principal" onclick="mostrarResultadosActividadesDocente()" type="button">📊 RESULTADOS DE ACTIVIDADES</button>
+<h3>📊 ACTIVIDAD DE DOCENTE: prácticas y evaluaciones</h3>
+<p style="opacity:.75;">Consulta los resultados guardados de las prácticas, las evaluaciones y las actividades interactivas de tus estudiantes.</p>
+<button class="btn-docente-principal" onclick="mostrarResultadosActividadesDocente()" type="button">📊 VER ACTIVIDADES Y RESULTADOS</button>
+<button class="btn-docente-principal" style="background:#2563eb;margin-left:8px" onclick="mostrarNotasYCumplimientoDocente()" type="button">📝 VER NOTAS Y ACTIVIDADES CUMPLIDAS</button>
 <div id="resultados-actividades-docente" style="display:none;margin-top:16px;"></div>
 </div>
 <div class="docente-form" id="docente-chat-panel">
@@ -4350,18 +4353,33 @@ async function finalizarEvaluacion() {
     errores
   );
 
-  // Guardar también en Firebase para que el resultado aparezca en el panel docente.
-  // El historial local se conserva; si Firebase falla, la evaluación sigue funcionando.
-  const guardadoFirebase = await guardarEvaluacion1Firebase(
-    evaluacionActual.categoria,
-    correctas,
-    total,
-    porcentaje,
-    nota
-  );
-  console.log(guardadoFirebase
-    ? '☁️ Evaluación 1 guardada en Firebase'
-    : '⚠️ Evaluación 1 no pudo guardarse en Firebase; se conserva localmente');
+  // Guardar en Firebase sin bloquear la pantalla final. La nota aparece inmediatamente.
+  let promesaGuardadoFirebase = Promise.resolve(false);
+  try {
+    if (typeof window.guardarEvaluacion1Firebase === 'function') {
+      promesaGuardadoFirebase = Promise.resolve(
+        window.guardarEvaluacion1Firebase(
+          evaluacionActual.categoria,
+          correctas,
+          total,
+          porcentaje,
+          nota
+        )
+      ).then((guardado) => {
+        console.log(guardado
+          ? '☁️ Evaluación guardada en Firebase'
+          : '⚠️ Firebase no confirmó el guardado; se conserva el historial local.');
+        return Boolean(guardado);
+      }).catch((errorFirebase) => {
+        console.error('No se pudo guardar la evaluación en Firebase:', errorFirebase);
+        return false;
+      });
+    } else {
+      console.warn('La función de guardado Firebase no está disponible; se conserva el historial local.');
+    }
+  } catch (errorFirebase) {
+    console.error('No se pudo iniciar el guardado en Firebase:', errorFirebase);
+  }
 
   const mensaje = nota === 5 ? '¡Excelente trabajo!' :
                   nota === 4 ? '¡Muy bien!' :
@@ -4394,6 +4412,22 @@ async function finalizarEvaluacion() {
   `;
 
   window.scrollTo({ top: 0, behavior: 'smooth' });
+
+  // Mostrar el estado de sincronización sin retrasar la nota del estudiante.
+  const resultadoContenedor = contenedor.querySelector('.resultado-evaluacion');
+  if (resultadoContenedor) {
+    const estadoGuardado = document.createElement('p');
+    estadoGuardado.className = 'estado-guardado-evaluacion';
+    estadoGuardado.setAttribute('role', 'status');
+    estadoGuardado.textContent = 'Guardando resultado en la nube…';
+    resultadoContenedor.appendChild(estadoGuardado);
+    promesaGuardadoFirebase.then((guardado) => {
+      if (!estadoGuardado.isConnected) return;
+      estadoGuardado.textContent = guardado
+        ? '☁️ Resultado sincronizado con el panel docente.'
+        : '⚠️ Resultado mostrado; no se confirmó la sincronización con la nube.';
+    });
+  }
   return false;
 }
 
@@ -7348,6 +7382,8 @@ document.addEventListener('DOMContentLoaded', function(){
     const obj={estudiante:activo(),nombre:activo(),actividad:'Evaluación 1 — Evaluación tradicional',tema:temaNombre(categoria),resultado:`${porcentaje}/100`,puntos:porcentaje,nota,porcentaje,correctas,total,fecha:fecha(),fechaISO:new Date().toISOString(),evaluacion:'Evaluación 1',tipo:'evaluacion1'};
     return guardarFirebaseResultado(obj);
   }
+  // Se expone explícitamente porque la función principal de evaluación está en otro script.
+  window.guardarEvaluacion1Firebase = guardarEvaluacion1Firebase;
 
   // En el archivo base "db" está declarado con let en el script global; hacemos una referencia global.
   // Si el navegador no expone esa variable, se obtiene desde Firebase.apps.
@@ -7528,6 +7564,14 @@ document.addEventListener('DOMContentLoaded', function(){
   // El dictado de verbos queda exclusivamente en Práctica Jugando y en los botones de verbos.
 
   // ===== RESULTADOS DEL DOCENTE =====
+  async function obtenerTodosLosNombresPanelDocente(){
+    const nombres=new Map();
+    const agregar=n=>{const nombre=String(n||'').trim().replace(/\s+/g,' ');if(nombre){const k=nombre.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();if(!nombres.has(k))nombres.set(k,nombre);}};
+    try{if(!window.db && typeof db!=='undefined')window.db=db; if(window.db){const snap=await window.db.collection('estudiantes').get();snap.forEach(doc=>{const n=typeof extraerNombreEstudiante==='function'?extraerNombreEstudiante(doc):((doc.data()||{}).nombre||'');agregar(n);});}}catch(e){console.warn('No se pudo leer la lista completa de estudiantes de Firebase',e);}
+    try{if(typeof obtenerEstudiantesRegistrados==='function')obtenerEstudiantesRegistrados().forEach(e=>agregar(e.nombre));}catch(e){}
+    try{if(Array.isArray(ESTUDIANTES_COMPATIBILIDAD))ESTUDIANTES_COMPATIBILIDAD.forEach(e=>agregar(e.nombre));}catch(e){}
+    return [...nombres.values()].sort((a,b)=>a.localeCompare(b,'es',{sensitivity:'base'}));
+  }
   window.mostrarResultadosActividadesDocente=async function(){
     if(typeof docenteAutenticado==='function'&&!docenteAutenticado()){alert('🔒 Solo el docente puede consultar resultados.');return;}
     const box=document.getElementById('resultados-actividades-docente');if(!box)return;
@@ -7541,17 +7585,73 @@ document.addEventListener('DOMContentLoaded', function(){
       }
     }catch(e){console.error(e);box.innerHTML='<p>⚠️ No se pudieron cargar los resultados de Firebase. Revisa las reglas de Firestore.</p>';return;}
     lista.sort((a,b)=>String(b.fechaISO||'').localeCompare(String(a.fechaISO||'')));
-    const estudiantes=[...new Set(lista.map(x=>x.estudiante||x.nombre).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
-    box.innerHTML=`<div class="filtro-resultados-docente"><select id="filtro-estudiante-resultados"><option value="">Todos los estudiantes</option>${estudiantes.map(x=>`<option value="${safe(x)}">${safe(x)}</option>`).join('')}</select><select id="filtro-tipo-resultados"><option value="">Todos los resultados</option><option value="evaluacion1">Evaluación 1</option><option value="actividad2">Evaluación 2 / Actividad</option></select><button type="button" class="btn-docente-principal" onclick="mostrarResultadosActividadesDocente()">🔄 Actualizar</button></div><div id="tabla-resultados-docente"></div>`;
-    window.__resultadosDocente=lista;renderTablaResultadosDocente();
+    const estudiantes=await obtenerTodosLosNombresPanelDocente();
+    box.innerHTML=`<div class="filtro-resultados-docente"><label for="filtro-estudiante-resultados">Estudiante:</label><select id="filtro-estudiante-resultados" onchange="renderTablaResultadosDocente()"><option value="">Todos los estudiantes</option>${estudiantes.map(x=>`<option value="${safe(x)}">${safe(x)}</option>`).join('')}</select><label for="filtro-tipo-resultados">Tipo:</label><select id="filtro-tipo-resultados" onchange="renderTablaResultadosDocente()"><option value="">Todos los resultados</option><option value="practica">Práctica</option><option value="evaluacion1">Evaluación 1</option><option value="actividad2">Evaluación 2 / Actividad</option></select><button type="button" class="btn-docente-principal" onclick="mostrarResultadosActividadesDocente()">🔄 Recargar desde Firebase</button></div><div id="tabla-resultados-docente"></div>`;
+    window.__resultadosDocente=lista;window.__estudiantesPanelDocente=estudiantes;renderTablaResultadosDocente();
   };
   window.renderTablaResultadosDocente=function(){
     const box=document.getElementById('tabla-resultados-docente');if(!box)return;
     const lista=window.__resultadosDocente||[];
-    const ef=document.getElementById('filtro-estudiante-resultados')?.value||'',tf=document.getElementById('filtro-tipo-resultados')?.value||'';
-    const fil=lista.filter(x=>(!ef||String(x.estudiante||x.nombre)===ef)&&(!tf||x.tipo===tf));
-    if(!fil.length){box.innerHTML='<p>📭 No hay resultados registrados.</p>';return;}
-    box.innerHTML=`<div style="overflow:auto"><table class="resultados-docente-tabla"><thead><tr><th>Estudiante</th><th>Actividad</th><th>Tema</th><th>Nota</th><th>Puntos</th><th>Fecha</th></tr></thead><tbody>${fil.map(x=>`<tr><td>${safe(x.estudiante||x.nombre||'')}</td><td>${safe(x.actividad||'')}</td><td>${safe(x.tema||'')}</td><td><strong>${safe(x.resultado||x.nota||'')}</strong></td><td>${safe(x.puntos??'')}</td><td>${safe(x.fecha||'')}</td></tr>`).join('')}</tbody></table></div>`;
+    const ef=document.getElementById('filtro-estudiante-resultados')?.value||'';
+    const tf=document.getElementById('filtro-tipo-resultados')?.value||'';
+    const filtrada=lista.filter(x=>(!ef||String(x.estudiante||x.nombre)===ef)&&(!tf||x.tipo===tf));
+    if(!filtrada.length){box.innerHTML='<p>📭 No hay resultados registrados para los filtros seleccionados.</p>';return;}
+
+    const nombreDe=x=>String(x.estudiante||x.nombre||'').trim();
+    const temaDe=x=>String(x.tema||x.categoria||x.actividad||'Tema sin identificar').trim();
+    // Este botón conserva el registro habitual: actividad más reciente primero.
+    const recientes=[...filtrada].sort((a,b)=>{
+      const fechaA=Date.parse(a.fechaISO||a.fecha||'')||0;
+      const fechaB=Date.parse(b.fechaISO||b.fecha||'')||0;
+      return fechaB-fechaA;
+    });
+    box.innerHTML=`
+      <h3 style="margin:14px 0 8px">🕒 Registro reciente de actividades</h3>
+      <p style="margin:0 0 12px;color:#475569">Las actividades aparecen desde la más reciente hasta la más antigua.</p>
+      <div style="overflow:auto"><table class="resultados-docente-tabla"><thead><tr><th>Estudiante</th><th>Actividad realizada</th><th>Tema</th><th>Nota / resultado</th><th>Puntos</th><th>Fecha</th></tr></thead><tbody>${recientes.map(x=>`<tr><td>${safe(nombreDe(x))}</td><td>${safe(x.actividad||x.evaluacion||'Actividad')}</td><td>${safe(temaDe(x))}</td><td><strong>${safe(x.resultado||x.nota||x.porcentaje||'')}</strong></td><td>${safe(x.puntos??'')}</td><td>${safe(x.fecha||x.fechaISO||'')}</td></tr>`).join('')}</tbody></table></div>`;
+
+  };
+
+  // Vista independiente solicitada: notas y actividades cumplidas. No modifica el botón original.
+  window.mostrarNotasYCumplimientoDocente=async function(){
+    if(typeof docenteAutenticado==='function'&&!docenteAutenticado()){alert('🔒 Solo el docente puede consultar estos datos.');return;}
+    const box=document.getElementById('resultados-actividades-docente');if(!box)return;
+    box.style.display='block';box.innerHTML='<p>⏳ Cargando notas y actividades desde Firebase...</p>';
+    try{
+      if(!window.db && typeof db!=='undefined')window.db=db;
+      if(!window.db){box.innerHTML='<p>⚠️ Firebase no está conectado.</p>';return;}
+      const snap=await window.db.collection(RESULTADOS_COLECCION).get();
+      const lista=[];snap.forEach(d=>lista.push({id:d.id,...(d.data()||{})}));
+      lista.sort((a,b)=>String(b.fechaISO||'').localeCompare(String(a.fechaISO||'')));
+      const todosNombres=await obtenerTodosLosNombresPanelDocente();
+      const safeTxt=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+      const notaDe=x=>x.nota!==undefined&&x.nota!==null&&x.nota!==''?x.nota:(x.resultado||x.porcentaje||'Sin nota');
+      const esCumplida=x=>String(x.resultado||'').trim()!==''||String(x.nota??'').trim()!==''||String(x.puntos??'').trim()!=='';
+      box.innerHTML=`<div style="margin:14px 0;padding:16px;border:1px solid #dbe3ec;border-radius:12px;background:#fff">
+        <h3>📝 Notas y actividades cumplidas</h3>
+        <p>Se muestra cada actividad registrada, su tema, la nota o resultado guardado y el estado de cumplimiento. Si no hay registro, no se interpreta como actividad perdida.</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0">
+          <label>Estudiante: <select id="filtro-estudiante-notas-docente" onchange="filtrarNotasYCumplimientoDocente()"><option value="">Todos los estudiantes</option>${todosNombres.map(n=>`<option value="${safeTxt(n)}">${safeTxt(n)}</option>`).join('')}</select></label>
+          <button class="btn-docente-principal" onclick="mostrarNotasYCumplimientoDocente()">🔄 Actualizar</button>
+        </div>
+        <div id="tabla-notas-cumplimiento-docente" style="overflow:auto"></div>
+      </div>`;
+      window.__notasCumplimientoDocente=lista;
+      window.filtrarNotasYCumplimientoDocente();
+    }catch(e){console.error(e);box.innerHTML='<p>⚠️ No se pudieron cargar las notas. Revisa la conexión y las reglas de Firestore.</p>';}
+  };
+  window.filtrarNotasYCumplimientoDocente=function(){
+    const box=document.getElementById('tabla-notas-cumplimiento-docente');if(!box)return;
+    const lista=window.__notasCumplimientoDocente||[];
+    const filtro=document.getElementById('filtro-estudiante-notas-docente')?.value||'';
+    const arr=lista.filter(x=>!filtro||String(x.estudiante||x.nombre||'')===filtro);
+    const safeTxt=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+    if(!arr.length){box.innerHTML='<p>No hay actividades registradas para este filtro.</p>';return;}
+    box.innerHTML=`<table class="resultados-docente-tabla" style="width:100%;border-collapse:collapse"><thead><tr><th>Estudiante</th><th>Actividad</th><th>Tema</th><th>Nota</th><th>Puntos</th><th>Estado</th><th>Fecha</th></tr></thead><tbody>${arr.map(x=>{
+      const nota=x.nota!==undefined&&x.nota!==null&&x.nota!==''?x.nota:(x.resultado||x.porcentaje||'Sin nota');
+      const tiene=String(x.resultado||'').trim()!==''||String(x.nota??'').trim()!==''||String(x.puntos??'').trim()!=='';
+      return `<tr><td>${safeTxt(x.estudiante||x.nombre||'Sin nombre')}</td><td>${safeTxt(x.actividad||x.evaluacion||'Actividad')}</td><td>${safeTxt(x.tema||x.categoria||'')}</td><td><strong>${safeTxt(nota)}</strong></td><td>${safeTxt(x.puntos??'—')}</td><td>${tiene?'✅ Cumplió / registrada':'— Sin registro'}</td><td>${safeTxt(x.fecha||'')}</td></tr>`;
+    }).join('')}</tbody></table>`;
   };
 
   // ===== FOTO DEL PERFIL: conservar automáticamente la foto del formulario =====
@@ -13997,5 +14097,214 @@ body.vista-chat-solo #btn-estudiante-superior,body.vista-chat-solo #estudiante-a
 })();
 </script>
 
+
+<!-- CORRECCIÓN FINAL: regreso limpio al panel del estudiante, sin vistas superpuestas -->
+<script id="correccion-regreso-limpio-estudiante-2026">
+(function(){
+  'use strict';
+
+  /*
+   * ÚNICO controlador final de regreso del estudiante.
+   * Se corrige el conflicto encontrado en la auditoría:
+   * - el archivo reasignaba regresarAlMenuEstudiante en muchos scripts;
+   * - el parche anterior volvía a mostrar .fila-modos-aprendizaje, que es
+   *   una pantalla intermedia y podía quedar encima del menú;
+   * - los listeners anteriores estaban repartidos entre window/document.
+   * Este controlador captura el clic en window (antes que los listeners de
+   * document) y devuelve siempre al menú autenticado, sin cerrar la sesión.
+   */
+
+  function nombreEstudianteActivo(){
+    try {
+      if(typeof window.obtenerNombreEstudiante === 'function'){
+        var nombre = String(window.obtenerNombreEstudiante() || '').trim();
+        if(nombre) return nombre;
+      }
+    } catch(e) {}
+    try {
+      return String(localStorage.getItem('aprendeInglesEstudianteActivoV1') || '').trim();
+    } catch(e) { return ''; }
+  }
+
+  function esBotonRegreso(elemento){
+    if(!elemento || !elemento.closest) return null;
+    var btn = elemento.closest('button, a, [role="button"]');
+    if(!btn) return null;
+    var texto = String(btn.innerText || btn.textContent || '')
+      .replace(/\s+/g,' ').trim().toLowerCase();
+    if(texto.indexOf('regresar al espacio del estudiante') !== -1 ||
+       texto.indexOf('volver al espacio del estudiante') !== -1 ||
+       texto.indexOf('regresar al panel del estudiante') !== -1){
+      return btn;
+    }
+    return null;
+  }
+
+  function regresarPanelEstudiante(ev){
+    if(ev){
+      ev.preventDefault();
+      ev.stopPropagation();
+      if(typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation();
+    }
+    try {
+      var nombre = nombreEstudianteActivo();
+      if(!nombre){
+        if(typeof window.irAccesoEstudiante === 'function') window.irAccesoEstudiante();
+        return false;
+      }
+
+      var main = document.querySelector('main.content');
+      var zona = document.querySelector('.zona-estudiante');
+      var menu = document.getElementById('menu-estudiante-logueado');
+      var fila = document.querySelector('.fila-modos-aprendizaje');
+      var cont = document.getElementById('contenedor-tarjetas');
+      var titulo = document.getElementById('titulo-tema');
+
+      /* Cerrar la vista que estaba abierta, sin tocar el historial guardado. */
+      document.body.classList.remove('vista-chat-solo');
+      document.querySelectorAll('.tema').forEach(function(el){
+        el.style.display = 'none';
+        el.style.visibility = 'hidden';
+        el.classList.remove('tema-activo-etapa1','tema-activo-2026');
+      });
+      [
+        'tema-foroPresentacion','tema-misDiplomas','modal-docente',
+        'panel-docente','resultados-actividades-docente'
+      ].forEach(function(id){
+        var el = document.getElementById(id);
+        if(el) el.style.display = 'none';
+      });
+      document.querySelectorAll('.modal-overlay, .panel-overlay').forEach(function(el){
+        el.style.display = 'none';
+      });
+
+      if(main){
+        main.style.display = 'flex';
+        main.style.visibility = 'visible';
+        main.classList.remove('inicio-bienvenida');
+      }
+      if(titulo) titulo.style.display = 'none';
+
+      /* Vaciar solo el HTML temporal del panel de progreso/actividad.
+         No se borran localStorage, Firestore ni las notas del estudiante. */
+      if(cont){
+        cont.innerHTML = '';
+        cont.className = 'grid-cards';
+        cont.style.display = 'none';
+        cont.style.visibility = 'hidden';
+        cont.style.opacity = '0';
+        cont.style.position = '';
+        cont.style.transform = '';
+        cont.style.zIndex = '';
+      }
+
+      if(zona){
+        zona.classList.remove('progreso-solo-2026');
+        zona.style.setProperty('display','flex','important');
+        zona.style.setProperty('visibility','visible','important');
+        zona.style.setProperty('opacity','1','important');
+        zona.style.position = 'relative';
+        zona.style.transform = 'none';
+        zona.style.zIndex = 'auto';
+      }
+
+      var activo = document.getElementById('estudiante-activo');
+      if(activo) activo.textContent = '👤 Estudiante activo: ' + nombre;
+      if(menu){
+        menu.style.setProperty('display','flex','important');
+        menu.style.setProperty('visibility','visible','important');
+        menu.style.setProperty('opacity','1','important');
+        menu.style.setProperty('pointer-events','auto','important');
+        menu.style.position = 'relative';
+        menu.style.transform = 'none';
+        menu.style.zIndex = 'auto';
+      }
+
+      /* No mostrar la pantalla intermedia de selección de modo encima del menú. */
+      if(fila){
+        fila.style.setProperty('display','none','important');
+        fila.style.visibility = 'hidden';
+        fila.style.opacity = '0';
+      }
+      var practica = document.getElementById('panel-practica');
+      var evaluacion = document.getElementById('panel-evaluacion');
+      if(practica) practica.style.display = 'flex';
+      if(evaluacion) evaluacion.style.display = 'none';
+      var bp = document.getElementById('btn-modo-practica');
+      var be = document.getElementById('btn-modo-evaluacion');
+      if(bp) bp.classList.add('activo');
+      if(be) be.classList.remove('activo');
+
+      try {
+        if(typeof window.actualizarBienvenidaInsignia === 'function') window.actualizarBienvenidaInsignia();
+      } catch(e) {}
+      window.scrollTo({top:0, behavior:'auto'});
+    } catch(err) {
+      console.error('Error al regresar al panel del estudiante:', err);
+    }
+    return false;
+  }
+
+  window.regresarAlMenuEstudiante = regresarPanelEstudiante;
+  window.volverDirectamenteAlPrincipalEstudiante = regresarPanelEstudiante;
+  window.__regresarPanelEstudianteSinSuperposicion = regresarPanelEstudiante;
+
+  /* Captura el clic en window antes de que se ejecuten los listeners antiguos
+     instalados en document. Así las funciones duplicadas no pueden competir. */
+  window.addEventListener('click', function(ev){
+    var btn = esBotonRegreso(ev.target);
+    if(btn) regresarPanelEstudiante(ev);
+  }, true);
+
+  function conectar(){
+    document.querySelectorAll('button, a, [role="button"]').forEach(function(btn){
+      var candidato = esBotonRegreso(btn);
+      if(candidato !== btn) return;
+      if(btn.tagName === 'BUTTON') btn.type = 'button';
+      /* Fallback accesible; el listener de window sigue siendo el controlador. */
+      btn.onclick = regresarPanelEstudiante;
+    });
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', conectar);
+  else conectar();
+  var obs = new MutationObserver(function(){ conectar(); });
+  if(document.body) obs.observe(document.body, {childList:true, subtree:true});
+})();
+</script>
+
+<script id="retirar-pistas-solo-evaluacion-2026">
+(function(){
+  'use strict';
+  /* Retira únicamente controles de pista/ayuda dentro de una evaluación.
+     No modifica las pistas que formen parte de juegos de práctica. */
+  function estaEnEvaluacion(el){
+    return !!(el && el.closest && el.closest('#contenedor-tarjetas.evaluacion-container'));
+  }
+  function textoNormalizado(el){
+    return String(el && (el.innerText || el.textContent) || '')
+      .replace(/[💡🔎❔❓]/g,' ').replace(/\s+/g,' ').trim().toLocaleLowerCase('es');
+  }
+  function esControlDePista(el){
+    if(!el || !estaEnEvaluacion(el)) return false;
+    var identificadores = String((el.id||'')+' '+(typeof el.className==='string'?el.className:'')+' '+(el.getAttribute('aria-label')||'')+' '+(el.getAttribute('title')||''));
+    if(/(^|[\s_-])(pista|pistas|hint|hints)([\s_-]|$)/i.test(identificadores)) return true;
+    var t = textoNormalizado(el);
+    if(!t || t.length > 100) return false;
+    return /^(mostrar|ver|usar|obtener|necesito|dame)?\s*(una\s+)?(pista|ayuda|hint)(\s+(de\s+)?(la\s+)?(pregunta|respuesta))?[.!…: ]*$/i.test(t)
+      || /^(mostrar pista|ver pista|necesito una pista|usar pista|ayuda|pista)$/i.test(t);
+  }
+  function limpiarPistas(){
+    var zona = document.querySelector('#contenedor-tarjetas.evaluacion-container');
+    if(!zona) return;
+    zona.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"], .pista, .pistas, .hint, .hints, [id*="pista" i], [class*="pista" i], [id*="hint" i], [class*="hint" i]').forEach(function(el){
+      if(esControlDePista(el)) el.remove();
+    });
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', limpiarPistas);
+  else limpiarPistas();
+  var observer = new MutationObserver(limpiarPistas);
+  if(document.body) observer.observe(document.body,{childList:true,subtree:true});
+})();
+</script>
 </body>
 </html>
