@@ -7379,7 +7379,7 @@ document.addEventListener('DOMContentLoaded', function(){
     }catch(e){console.error('No se pudo guardar resultado en Firebase:',e);return false;}
   }
   async function guardarEvaluacion1Firebase(categoria,correctas,total,porcentaje,nota){
-    const obj={estudiante:activo(),nombre:activo(),actividad:'Evaluación 1 — Evaluación tradicional',tema:temaNombre(categoria),resultado:`${porcentaje}/100`,puntos:porcentaje,nota,porcentaje,correctas,total,fecha:fecha(),fechaISO:new Date().toISOString(),evaluacion:'Evaluación 1',tipo:'evaluacion1'};
+    const obj={estudiante:activo(),nombre:activo(),categoria,actividad:'Evaluación 1 — Evaluación tradicional',tema:temaNombre(categoria),resultado:`${porcentaje}/100`,puntos:porcentaje,nota,porcentaje,correctas,total,fecha:fecha(),fechaISO:new Date().toISOString(),evaluacion:'Evaluación 1',tipo:'evaluacion1'};
     return guardarFirebaseResultado(obj);
   }
   // Se expone explícitamente porque la función principal de evaluación está en otro script.
@@ -14308,3 +14308,158 @@ body.vista-chat-solo #btn-estudiante-superior,body.vista-chat-solo #estudiante-a
 </script>
 </body>
 </html>
+
+
+<script id="sincronizacion-progreso-firestore-2026-10">
+(function(){
+  'use strict';
+  if(window.__sincronizacionProgresoFirestore202610)return;
+  window.__sincronizacionProgresoFirestore202610=true;
+  var COLECCION='resultados';
+  function normalizarTexto(v){return String(v==null?'':v).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ');}
+  function escapar(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+  function nombreActivo(){try{return String(window.obtenerNombreEstudiante?window.obtenerNombreEstudiante():'').trim();}catch(e){return '';}}
+  function fechaId(r,docId){
+    var n=Number(r.id);if(Number.isFinite(n)&&n>0)return n;
+    var f=Date.parse(r.fechaISO||r.fecha||'');if(Number.isFinite(f)&&f>0)return f;
+    // Fallback estable para que los registros sin fecha sigan siendo ordenables.
+    var h=0;for(var i=0;i<String(docId||'').length;i++)h=((h<<5)-h+String(docId).charCodeAt(i))|0;
+    return Math.abs(h)||1;
+  }
+  function resolverCategoria(r){
+    var c=String(r.categoria||'').trim();
+    var temas={};try{temas=(typeof nombresTemas!=='undefined'&&nombresTemas)||window.nombresTemas||{};}catch(e){temas=window.nombresTemas||{};}
+    if(c && Object.prototype.hasOwnProperty.call(temas,c))return c;
+    var posibles=[c,r.tema,r.actividad];
+    var normal=function(v){return normalizarTexto(v).replace(/[^a-z0-9]+/g,'');};
+    for(var i=0;i<posibles.length;i++){
+      var v=normal(posibles[i]);if(!v)continue;
+      if(Object.prototype.hasOwnProperty.call(temas,posibles[i]))return posibles[i];
+      var keys=Object.keys(temas);
+      for(var j=0;j<keys.length;j++)if(normal(keys[j])===v||normal(temas[keys[j]])===v)return keys[j];
+    }
+    // Alias históricos usados por algunas actividades de la plataforma.
+    var alias={
+      'colores':'colores','adjetivosdecolores':'adjetivosColores','colors':'colores',
+      'familia y amigos':'familia','familia':'familia','partes del cuerpo humano':'cuerpo',
+      'partes del cuerpo':'cuerpo','universo y astronomia':'universo','astronomia':'universo',
+      'emociones':'adjetivosEmociones','emociones en ingles':'adjetivosEmociones',
+      'numeros':'numeros','dias de la semana':'dias','meses del ano':'meses',
+      'pronombres posesivos':'pronombresPosesivos','adjetivos posesivos':'adjetivosPosesivos',
+      'adjetivos descriptivos':'adjetivosDescriptivos','adjetivos de texturas':'adjetivosTexturas',
+      '100 verbos regulares':'verbosRegulares','100 verbos irregulares':'verbosIrregulares',
+      'saludos comunes':'saludos','abecedario':'abecedario'
+    };
+    for(var k=0;k<posibles.length;k++){var nk=normalizarTexto(posibles[k]);if(alias[nk])return alias[nk];}
+    return c || String(r.tema||r.actividad||'').trim();
+  }
+  function normalizarRegistro(r,docId,nombre){
+    r=r||{};
+    var tipo=normalizarTexto(r.tipo);
+    var etiqueta=normalizarTexto(r.evaluacion||r.actividad||'');
+    if(!tipo){
+      if(etiqueta.indexOf('evaluacion 1')>=0)tipo='evaluacion1';
+      else if(etiqueta.indexOf('evaluacion 2')>=0)tipo='actividad2';
+      else if(etiqueta.indexOf('practica')>=0||etiqueta.indexOf('educaplay')>=0)tipo='practica';
+      else return null;
+    }
+    if(tipo==='insignia'||tipo==='foro'||tipo==='chat'||tipo==='registro')return null;
+    if(!['practica','actividad2','evaluacion1','evaluacion','evaluaciontradicional'].includes(tipo))return null;
+    if(tipo==='evaluacion'||tipo==='evaluaciontradicional')tipo='evaluacion1';
+    var categoria=resolverCategoria(r);
+    var notaRaw=(r.nota!==undefined&&r.nota!==null&&r.nota!=='')?r.nota:((r.puntos!==undefined&&r.puntos!==null&&r.puntos!=='')?r.puntos:null);
+    var nota=Number(notaRaw);if(!Number.isFinite(nota))nota=0;
+    var porcentaje=Number(r.porcentaje);
+    if(!Number.isFinite(porcentaje)||porcentaje<0){porcentaje=tipo==='evaluacion1'?Math.max(0,Math.min(100,nota)):Math.max(0,Math.min(100,Number(r.correctas||0)/Math.max(1,Number(r.total||5))*100));}
+    var id=fechaId(r,docId);
+    var fecha=r.fecha||r.fechaISO||(id?new Date(id).toLocaleString('es-CO',{dateStyle:'short',timeStyle:'short'}):'');
+    var out=Object.assign({},r,{
+      id:id, firebaseDocId:String(docId||r.firebaseDocId||''),
+      estudiante:String(r.estudiante||r.nombre||nombre).trim(),nombre:String(r.nombre||r.estudiante||nombre).trim(),
+      categoria:categoria,tema:String(r.tema||((function(){try{return (typeof nombresTemas!=='undefined'&&nombresTemas)||window.nombresTemas||{};}catch(e){return window.nombresTemas||{};}})()[categoria])||categoria||r.actividad||'Actividad'),
+      tipo:tipo,nota:nota,puntos:Number(r.puntos!==undefined&&r.puntos!==null?r.puntos:nota),
+      porcentaje:porcentaje,fecha:fecha,fechaISO:r.fechaISO||'',
+      correctas:Number(r.correctas||0),total:Number(r.total||0),
+      aprobada:typeof r.aprobada==='boolean'?r.aprobada:(tipo==='practica'||tipo==='actividad2'?nota>0:(porcentaje>=60||nota>=3))
+    });
+    if(tipo==='evaluacion1' && (!r.categoria || !String(r.categoria).trim())){
+      out.categoria=categoria;
+    }
+    return out;
+  }
+  function firma(e){
+    var tipo=normalizarTexto(e.tipo),cat=normalizarTexto(e.categoria||e.tema||e.actividad);
+    var fecha=String(e.fechaISO||'');
+    if(!fecha && e.fecha)fecha=String(e.fecha);
+    return [tipo,cat,Number(e.nota??e.puntos??0),String(e.resultado||''),fecha].join('|');
+  }
+  async function sincronizarProgresoDesdeFirebase(){
+    var nombre=nombreActivo();if(!nombre)return {ok:false,razon:'sin-estudiante'};
+    var db=window.db;
+    if(!db){try{if(typeof window.firebase!=='undefined'&&firebase.apps&&firebase.apps.length&&firebase.firestore)db=firebase.firestore();}catch(e){}}
+    if(!db||typeof db.collection!=='function')return {ok:false,razon:'sin-firebase'};
+    try{
+      // Leemos la colección ya existente y filtramos nombres normalizados para incluir registros históricos
+      // que pueden variar en mayúsculas, tildes o espacios. No se modifica ni elimina ningún documento.
+      var snap=await db.collection(COLECCION).get();
+      var nube=[];
+      snap.forEach(function(doc){
+        var r=doc.data()||{};
+        var propietario=String(r.estudiante||r.nombre||'').trim();
+        if(normalizarTexto(propietario)!==normalizarTexto(nombre))return;
+        var nr=normalizarRegistro(r,doc.id,nombre);if(nr)nube.push(nr);
+      });
+      var local={evaluaciones:[],errores:[]};
+      try{var bruto=localStorage.getItem(typeof window.claveDatosEstudiante==='function'?window.claveDatosEstudiante(nombre):'');if(bruto)local=JSON.parse(bruto)||local;}catch(e){}
+      if(!Array.isArray(local.evaluaciones))local.evaluaciones=[];
+      var combinados=[],vistos=new Set();
+      // Firestore va primero: sus registros tienen prioridad frente a copias locales del mismo resultado.
+      nube.sort(function(a,b){return Number(b.id||0)-Number(a.id||0);});
+      nube.concat(local.evaluaciones).forEach(function(e){
+        if(!e||typeof e!=='object')return;
+        var n=normalizarRegistro(e,e.firebaseDocId||e.id,nombre)||e;
+        var f=firma(n);if(vistos.has(f))return;vistos.add(f);combinados.push(n);
+      });
+      combinados.sort(function(a,b){return Number(b.id||0)-Number(a.id||0);});
+      var resultado={evaluaciones:combinados,errores:Array.isArray(local.errores)?local.errores:[],_fuente:'firestore+local'};
+      // Guardamos una copia compatible localmente como caché; no escribimos ni borramos documentos en Firestore.
+      try{
+        var limpio={evaluaciones:combinados,errores:resultado.errores};
+        var key='aprendeInglesProgreso_estudiante_'+normalizarTexto(nombre).normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
+        localStorage.setItem(key,JSON.stringify(limpio));
+      }catch(e){console.warn('No se pudo actualizar la caché local de progreso:',e);}
+      window.__progresoFirestoreActual={nombre:normalizarTexto(nombre),data:resultado,leidoEn:Date.now()};
+      return {ok:true,data:resultado,cuenta:nube.length};
+    }catch(error){
+      console.error('No se pudo recuperar el progreso desde Firestore:',error);
+      return {ok:false,razon:'lectura-fallida',error:error};
+    }
+  }
+  window.sincronizarProgresoDesdeFirebase=sincronizarProgresoDesdeFirebase;
+  function avisoEstado(res){
+    var cont=document.getElementById('contenedor-tarjetas');if(!cont)return;
+    var previo=document.getElementById('aviso-sincronizacion-progreso');if(previo)previo.remove();
+    var aviso=document.createElement('div');aviso.id='aviso-sincronizacion-progreso';
+    aviso.style.cssText='margin:0 0 12px;padding:10px 14px;border-radius:8px;font-size:.92rem;';
+    if(res.ok){aviso.style.cssText+='background:#eaf7ee;color:#176b35;border:1px solid #b9e2c5;';aviso.textContent='☁️ Progreso actualizado desde Firebase ('+res.cuenta+' registros de este estudiante).';}
+    else{aviso.style.cssText+='background:#fff7e6;color:#805600;border:1px solid #ead39b;';aviso.textContent=res.razon==='sin-estudiante'?'':(res.razon==='sin-firebase'?'⚠️ Firebase no está disponible. Se muestran los datos guardados en este navegador.':'⚠️ No se pudo leer Firebase. Se muestran los datos disponibles en este navegador.');}
+    if(aviso.textContent)cont.insertBefore(aviso,cont.firstChild);
+  }
+  function envolver(nombreFuncion){
+    var original=window[nombreFuncion];if(typeof original!=='function'||original.__firestoreSyncWrapped)return;
+    var envoltura=async function(){
+      var res=await sincronizarProgresoDesdeFirebase();
+      var r=original.apply(this,arguments);
+      // Las funciones originales dibujan sincrónicamente. Ponemos el aviso después del render.
+      setTimeout(function(){avisoEstado(res);},0);
+      return r;
+    };
+    envoltura.__firestoreSyncWrapped=true;
+    window[nombreFuncion]=envoltura;
+  }
+  envolver('mostrarPanelProgreso');
+  envolver('mostrarPanelProgresoPractica');
+  // También permite refrescar la caché desde otros componentes sin modificar el diseño.
+})();
+</script>
+
