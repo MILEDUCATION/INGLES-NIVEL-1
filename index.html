@@ -5691,7 +5691,7 @@ window.mostrarPanelProgreso = function(){
       const resumen=cont.querySelector('.progreso-resumen');
       if(resumen){
         resumen.innerHTML=`
-          <div class="tarjeta-dashboard"><span>📝</span><strong>${total}</strong><small>Total evaluaciones</small></div>
+          <div class="tarjeta-dashboard"><span>📝</span><strong>${total}</strong><small>Total actividades</small></div>
           <div class="tarjeta-dashboard"><span>✅</span><strong>${ganadas}</strong><small>Evaluaciones aprobadas</small></div>
           <div class="tarjeta-dashboard"><span>❌</span><strong>${perdidas}</strong><small>Evaluaciones no aprobadas</small></div>
           <div class="tarjeta-dashboard"><span>⏳</span><strong>${pendientes}</strong><small>Evaluaciones faltantes</small></div>
@@ -8252,7 +8252,7 @@ document.addEventListener('DOMContentLoaded', function(){
         <p>La evaluación tiene su propio espacio y su propio progreso.</p>
         <div class="estudiante-botones">
           <button class="boton-evaluacion" type="button" onclick="mostrarModoDesdeEspacioEstudiante('evaluacion')">📝 Realizar evaluación</button>
-          <button class="boton-progreso" type="button" onclick="mostrarPanelProgreso()">📊 Progreso de evaluación</button>
+          <button class="boton-progreso" type="button" onclick="mostrarPanelProgreso()">📊 Mi progreso</button>
         </div>
       </section>
       <section class="estudiante-bloque-menu">
@@ -8521,7 +8521,7 @@ document.addEventListener('DOMContentLoaded', function(){
     const zona=document.querySelector('.zona-estudiante'); if(zona) zona.style.display='none';
     const fila=document.querySelector('.fila-modos-aprendizaje'); if(fila) fila.style.display='none';
     if(!nombre){
-      cont.innerHTML=`<section class="progreso-hero"><h1>📝 Progreso de evaluación</h1><p>Primero entra como estudiante.</p></section>`;return;
+      cont.innerHTML=`<section class="progreso-hero"><h1>📝 Mi progreso</h1><p>Primero entra como estudiante.</p></section>`;return;
     }
     const data=obtenerProgresoGuardado()||{evaluaciones:[]};
     const ev=typeof registrosDeEvaluacion==='function'?registrosDeEvaluacion(data.evaluaciones):[];
@@ -8540,14 +8540,14 @@ document.addEventListener('DOMContentLoaded', function(){
     const perdidas=realizados.length-ganadas;
     cont.className='panel-dashboard progreso-vista-completa';
     cont.innerHTML=`
-      <section class="progreso-hero"><h1>📝 Progreso de evaluación</h1><p><strong>${esc(nombre)}</strong>, este panel muestra únicamente tus evaluaciones.</p>
+      <section class="progreso-hero"><h1>📝 Mi progreso</h1><p><strong>${esc(nombre)}</strong>, este panel muestra únicamente tus evaluaciones.</p>
       <div class="tarjetas-resumen-dashboard progreso-resumen">
-        <div class="tarjeta-dashboard"><span>📝</span><strong>${Object.keys(temas).length}</strong><small>Total evaluaciones</small></div>
+        <div class="tarjeta-dashboard"><span>📝</span><strong>${Object.keys(temas).length}</strong><small>Total actividades</small></div>
         <div class="tarjeta-dashboard"><span>🔵</span><strong>${ganadas}</strong><small>Aprobadas</small></div>
         <div class="tarjeta-dashboard"><span>🔴</span><strong>${perdidas}</strong><small>No aprobadas</small></div>
         <div class="tarjeta-dashboard"><span>⏳</span><strong>${Math.max(0,Object.keys(temas).length-realizados.length)}</strong><small>Pendientes</small></div>
       </div></section>
-      <section class="tarjeta-panel estado-tus-temas"><h2>📊 Estado de las evaluaciones</h2><p>🔵 Azul = aprobada · 🔴 Rojo = no aprobada.</p><div class="estado-temas-lista">${rows}</div></section>`;
+      <section class="tarjeta-panel estado-tus-temas"><h2>📊 Estado de tus actividades</h2><p>🔵 Azul = aprobada · 🔴 Rojo = no aprobada.</p><div class="estado-temas-lista">${rows}</div></section>`;
     window.scrollTo({top:0,behavior:'smooth'});
   };
 
@@ -11810,7 +11810,7 @@ body.modo-estudio-estudiante-v2 main.content{
     cont.style.display='block';cont.style.visibility='visible';cont.style.opacity='1';
     cont.className='panel-dashboard progreso-vista-completa';
     if(!nombre){
-      cont.innerHTML='<section class="progreso-hero"><h1>📝 Progreso de evaluación</h1><p>Primero entra como estudiante.</p><button type="button" class="btn-iniciar-evaluacion" onclick="irAccesoEstudiante()">👨‍🎓 Entrar como estudiante</button></section>';
+      cont.innerHTML='<section class="progreso-hero"><h1>📝 Mi progreso</h1><p>Primero entra como estudiante.</p><button type="button" class="btn-iniciar-evaluacion" onclick="irAccesoEstudiante()">👨‍🎓 Entrar como estudiante</button></section>';
       return false;
     }
     var data={evaluaciones:[]};
@@ -11834,7 +11834,7 @@ body.modo-estudio-estudiante-v2 main.content{
     var perdidas=realizadas.length-ganadas;
     var puntosDiplomas=0;
     try{puntosDiplomas=typeof calcularPuntosDesdeHistorial==='function'?calcularPuntosDesdeHistorial(ev):0;}catch(x){puntosDiplomas=0;}
-    cont.innerHTML='<section class="progreso-hero"><h1>📝 Progreso de evaluación</h1><p><strong>'+safe(nombre)+'</strong>, este panel muestra únicamente tus evaluaciones.</p><div style="margin:14px 0 20px;text-align:left;"><button type="button" class="btn-iniciar-evaluacion btn-regreso-progreso-evaluacion" onclick="return regresarAlMenuEstudiante();">↩️ Regresar al espacio principal del estudiante</button></div><div class="tarjetas-resumen-dashboard progreso-resumen"><div class="tarjeta-dashboard"><span>📝</span><strong>'+keys.length+'</strong><small>Total evaluaciones</small></div><div class="tarjeta-dashboard"><span>🔵</span><strong>'+ganadas+'</strong><small>Aprobadas</small></div><div class="tarjeta-dashboard"><span>🔴</span><strong>'+perdidas+'</strong><small>No aprobadas</small></div><div class="tarjeta-dashboard"><span>⏳</span><strong>'+Math.max(0,keys.length-realizadas.length)+'</strong><small>Pendientes</small></div><div class="tarjeta-dashboard"><span>🏆</span><strong>'+puntosDiplomas+'</strong><small>Puntos para diplomas</small></div></div></section><section class="tarjeta-panel estado-tus-temas"><h2>📊 Estado de las evaluaciones</h2><p>🔵 Azul = aprobada · 🔴 Rojo = no aprobada.</p><div class="estado-temas-lista">'+rows+'</div></section>';
+    cont.innerHTML='<section class="progreso-hero"><h1>📝 Mi progreso</h1><p><strong>'+safe(nombre)+'</strong>, este panel muestra únicamente tus evaluaciones.</p><div style="margin:14px 0 20px;text-align:left;"><button type="button" class="btn-iniciar-evaluacion btn-regreso-progreso-evaluacion" onclick="return regresarAlMenuEstudiante();">↩️ Regresar al espacio principal del estudiante</button></div><div class="tarjetas-resumen-dashboard progreso-resumen"><div class="tarjeta-dashboard"><span>📝</span><strong>'+keys.length+'</strong><small>Total actividades</small></div><div class="tarjeta-dashboard"><span>🔵</span><strong>'+ganadas+'</strong><small>Aprobadas</small></div><div class="tarjeta-dashboard"><span>🔴</span><strong>'+perdidas+'</strong><small>No aprobadas</small></div><div class="tarjeta-dashboard"><span>⏳</span><strong>'+Math.max(0,keys.length-realizadas.length)+'</strong><small>Pendientes</small></div><div class="tarjeta-dashboard"><span>🏆</span><strong>'+puntosDiplomas+'</strong><small>Puntos para diplomas</small></div></div></section><section class="tarjeta-panel estado-tus-temas"><h2>📊 Estado de tus actividades</h2><p>🔵 Azul = aprobada · 🔴 Rojo = no aprobada.</p><div class="estado-temas-lista">'+rows+'</div></section>';
     cont.scrollIntoView({behavior:'smooth',block:'start'});window.scrollTo({top:0,behavior:'smooth'});return false;
   };
 })();
@@ -14339,7 +14339,7 @@ body.vista-chat-solo #btn-estudiante-superior,body.vista-chat-solo #estudiante-a
     await consulta('nombre');
     return docs.map(function(d){
       var tipo=String(d.tipo||'').toLowerCase();
-      if(tipo==='practica'||tipo==='actividad2'||tipo==='insignia') return null;
+      if(tipo==='insignia') return null;
       var categoria=categoriaDe(d,temas); if(!categoria || categoria==='general') return null;
       var nota=Number(d.nota);
       if(!Number.isFinite(nota) || d.nota===undefined || d.nota===null){
@@ -14361,7 +14361,7 @@ body.vista-chat-solo #btn-estudiante-superior,body.vista-chat-solo #estudiante-a
     var fila=document.querySelector('.fila-modos-aprendizaje');if(fila)fila.style.display='none';
     var dip=document.getElementById('tema-misDiplomas');if(dip)dip.style.display='none';
     cont.style.display='block';cont.style.visibility='visible';cont.style.opacity='1';cont.className='panel-dashboard progreso-vista-completa';
-    if(!nombre){cont.innerHTML='<section class="progreso-hero"><h1>📝 Progreso de evaluación</h1><p>Primero entra como estudiante.</p><button type="button" class="btn-iniciar-evaluacion" onclick="irAccesoEstudiante()">👨‍🎓 Entrar como estudiante</button></section>';return false;}
+    if(!nombre){cont.innerHTML='<section class="progreso-hero"><h1>📝 Mi progreso</h1><p>Primero entra como estudiante.</p><button type="button" class="btn-iniciar-evaluacion" onclick="irAccesoEstudiante()">👨‍🎓 Entrar como estudiante</button></section>';return false;}
     var temas=(typeof nombresTemas==='object'&&nombresTemas)?nombresTemas:{};
     cont.innerHTML='<section class="progreso-hero"><h1>📝 Cargando tu progreso…</h1><p>Estamos consultando tus resultados guardados.</p></section>';
     var data={evaluaciones:[]};try{data=obtenerProgresoGuardado()||data;}catch(e){}
@@ -14369,7 +14369,7 @@ body.vista-chat-solo #btn-estudiante-superior,body.vista-chat-solo #estudiante-a
     var nube=[];try{nube=await leerResultadosNube(nombre,temas);}catch(e){console.warn('Error consultando Firebase para Mi progreso:',e);}
     var todos=locales.concat(nube);var ev=[];
     todos.forEach(function(e){
-      if(!e)return;var tipo=String(e.tipo||'').toLowerCase();if(tipo==='practica'||tipo==='actividad2'||tipo==='insignia')return;
+      if(!e)return;var tipo=String(e.tipo||'').toLowerCase();if(tipo==='insignia')return;
       var cat=categoriaDe(e,temas);if(!cat||cat==='general')return;
       var n=Number(e.nota);if(!Number.isFinite(n)||e.nota==null){n=Number(e.puntos);if(!Number.isFinite(n)||n>5)n=Number(e.porcentaje||0)/20;}
       var pct=Number(e.porcentaje);if(!Number.isFinite(pct))pct=Math.round(n*20);
@@ -14380,7 +14380,7 @@ body.vista-chat-solo #btn-estudiante-superior,body.vista-chat-solo #estudiante-a
     var rows=keys.map(function(cat){var e=porTema[cat];if(!e)return '<div class="estado-tema-row pendiente"><div class="estado-tema-nombre"><strong>'+escapar(temas[cat])+'</strong></div><div class="estado-tema-datos"><div class="estado-tema-barra"><span style="width:0%"></span></div><div class="estado-tema-estado">⏳ Falta</div></div><div class="estado-tema-nota">Pendiente</div></div>';var ok=Number(e.porcentaje)>=60||Number(e.nota)>=3;var pct=Math.max(0,Math.min(100,Number(e.porcentaje||0)));return '<div class="estado-tema-row '+(ok?'aprobada':'reprobada')+'"><div class="estado-tema-nombre"><strong>'+escapar(temas[cat])+'</strong></div><div class="estado-tema-datos"><div class="estado-tema-barra"><span style="width:'+pct+'%"></span></div><div class="estado-tema-estado">'+(ok?'🔵 Aprobada':'🔴 No aprobada')+' · '+escapar(e.fecha||'')+'</div></div><div class="estado-tema-nota">'+Number(e.nota||0).toFixed(1)+' / 5</div></div>';}).join('');
     var realizadas=Object.values(porTema),ganadas=realizadas.filter(function(e){return Number(e.porcentaje)>=60||Number(e.nota)>=3;}).length,perdidas=realizadas.length-ganadas;
     var puntos=0;try{puntos=typeof calcularPuntosDesdeHistorial==='function'?calcularPuntosDesdeHistorial(ev):0;}catch(e){}
-    cont.innerHTML='<section class="progreso-hero"><h1>📝 Progreso de evaluación</h1><p><strong>'+escapar(nombre)+'</strong>, aquí aparecen tus evaluaciones guardadas en este dispositivo y en la nube.</p><div style="margin:14px 0 20px;text-align:left"><button type="button" class="btn-iniciar-evaluacion btn-regreso-progreso-evaluacion" onclick="return regresarAlMenuEstudiante();">↩️ Regresar al espacio principal del estudiante</button></div><div class="tarjetas-resumen-dashboard progreso-resumen"><div class="tarjeta-dashboard"><span>📝</span><strong>'+keys.length+'</strong><small>Total evaluaciones</small></div><div class="tarjeta-dashboard"><span>🔵</span><strong>'+ganadas+'</strong><small>Aprobadas</small></div><div class="tarjeta-dashboard"><span>🔴</span><strong>'+perdidas+'</strong><small>No aprobadas</small></div><div class="tarjeta-dashboard"><span>⏳</span><strong>'+Math.max(0,keys.length-realizadas.length)+'</strong><small>Pendientes</small></div><div class="tarjeta-dashboard"><span>🏆</span><strong>'+puntos+'</strong><small>Puntos para diplomas</small></div></div></section><section class="tarjeta-panel estado-tus-temas"><h2>📊 Estado de las evaluaciones</h2><p>🔵 Azul = aprobada · 🔴 Rojo = no aprobada.</p><div class="estado-temas-lista">'+rows+'</div></section>';
+    cont.innerHTML='<section class="progreso-hero"><h1>📝 Mi progreso</h1><p><strong>'+escapar(nombre)+'</strong>, aquí aparecen tus actividades guardadas en este dispositivo y en la nube.</p><div style="margin:14px 0 20px;text-align:left"><button type="button" class="btn-iniciar-evaluacion btn-regreso-progreso-evaluacion" onclick="return regresarAlMenuEstudiante();">↩️ Regresar al espacio principal del estudiante</button></div><div class="tarjetas-resumen-dashboard progreso-resumen"><div class="tarjeta-dashboard"><span>📝</span><strong>'+keys.length+'</strong><small>Total actividades</small></div><div class="tarjeta-dashboard"><span>🔵</span><strong>'+ganadas+'</strong><small>Aprobadas</small></div><div class="tarjeta-dashboard"><span>🔴</span><strong>'+perdidas+'</strong><small>No aprobadas</small></div><div class="tarjeta-dashboard"><span>⏳</span><strong>'+Math.max(0,keys.length-realizadas.length)+'</strong><small>Pendientes</small></div><div class="tarjeta-dashboard"><span>🏆</span><strong>'+puntos+'</strong><small>Puntos para diplomas</small></div></div></section><section class="tarjeta-panel estado-tus-temas"><h2>📊 Estado de tus actividades</h2><p>🔵 Azul = aprobada · 🔴 Rojo = no aprobada.</p><div class="estado-temas-lista">'+rows+'</div></section>';
     cont.scrollIntoView({behavior:'smooth',block:'start'});window.scrollTo({top:0,behavior:'smooth'});return false;
   };
 })();
