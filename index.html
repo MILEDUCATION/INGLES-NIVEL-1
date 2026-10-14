@@ -7001,7 +7001,138 @@ async function verCertificado(meta){
     const w=window.open('','_blank');
     if(!w){alert('Permite las ventanas emergentes para ver el diploma.');return;}
     w.document.open();
-    w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Diploma - ${escapeForo(r.nombre)}</title><style>html,body{margin:0;padding:0;width:100%;height:100%;background:#fff;overflow:auto}body{display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box}img{display:block;width:auto;height:auto;max-width:min(850px,86vw);max-height:82vh;object-fit:contain}</style></head><body><img src="${r.dataUrl}" alt="Diploma de ${escapeForo(r.nombre)}"></body></html>`);
+    w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Diploma - ${escapeForo(r.nombre)}</title><style>html,body{margin:0;padding:0;width:100%;height:100%;background:#fff;overflow:auto}body{display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box}img{display:block;width:auto;height:auto;max-width:min(850px,86vw);max-height:82vh;object-fit:contain}</style></head><body><img src="${r.dataUrl}" alt="Diploma de ${escapeForo(r.nombre)}">
+<script id="correccion-progreso-notas-firebase-2026">
+/* Sincroniza las evaluaciones ya guardadas en Firestore con el historial
+   que consulta "Mi progreso". No borra estudiantes ni resultados existentes. */
+(function(){
+  'use strict';
+  const COLL = 'resultados';
+  const normalizar = v => String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+
+  function nombreActivo(){
+    try {
+      if(typeof window.obtenerNombreEstudiante === 'function') return String(window.obtenerNombreEstudiante() || '').trim();
+      return String(localStorage.getItem('estudianteActivo') || '').trim();
+    } catch(e){ return ''; }
+  }
+  function obtenerDb(){
+    try {
+      if(window.db && typeof window.db.collection === 'function') return window.db;
+      if(typeof db !== 'undefined' && db && typeof db.collection === 'function') return db;
+    } catch(e){}
+    return null;
+  }
+  function categoriaDe(r, temas){
+    if(r.categoria && temas[r.categoria]) return r.categoria;
+    const posibles = [r.tema, r.actividad, r.categoria].filter(Boolean).map(normalizar);
+    for(const [clave, nombre] of Object.entries(temas)){
+      const n = normalizar(nombre);
+      if(posibles.some(x => x === n || x.includes(n) || n.includes(x))) return clave;
+    }
+    const aliases = {
+      'abecedario':'abecedario','alphabet':'abecedario',
+      'pronombres personales':'pronombres','personal pronouns':'pronombres',
+      'adjetivos posesivos':'adjetivosPosesivos','possessive adjectives':'adjetivosPosesivos',
+      'adjetivos descriptivos':'adjetivosDescriptivos','adjetivos de colores':'adjetivosColores',
+      'numeros':'numeros','numbers':'numeros','verbos regulares':'verbosRegulares',
+      'verbos irregulares':'verbosIrregulares','dias':'dias','months':'meses',
+      'meses':'meses','universo':'universo','universe':'universo',
+      'partes del cuerpo':'cuerpo','body parts':'cuerpo','saludos':'saludos','greetings':'saludos'
+    };
+    for(const x of posibles){
+      for(const [alias, clave] of Object.entries(aliases)){
+        if(x.includes(normalizar(alias)) && temas[clave]) return clave;
+      }
+    }
+    return '';
+  }
+  function esEvaluacion(r){
+    const t = normalizar([r.tipo,r.evaluacion,r.actividad].filter(Boolean).join(' '));
+    if(/practica|practice|foro|comentario|formulario/.test(t)) return false;
+    return /evaluacion|assessment|actividad interactiva/.test(t) ||
+      (r.nota !== undefined && r.porcentaje !== undefined && r.correctas !== undefined);
+  }
+  async function sincronizar(){
+    const nombre = nombreActivo();
+    const d = obtenerDb();
+    if(!nombre || !d || typeof window.obtenerProgresoGuardado !== 'function' ||
+       typeof window.guardarProgresoGuardado !== 'function') return;
+    try{
+      const snap = await d.collection(COLL).get();
+      const temas = (typeof nombresTemas === 'object' && nombresTemas) ? nombresTemas : {};
+      const propios = [];
+      snap.forEach(doc => {
+        const r = doc.data() || {};
+        const nombres = [r.estudiante, r.nombre, r.nombreEstudiante].filter(Boolean).map(normalizar);
+        if(!nombres.includes(normalizar(nombre)) || !esEvaluacion(r)) return;
+        const categoria = categoriaDe(r, temas);
+        if(!categoria) return;
+        const tipo = normalizar([r.tipo,r.evaluacion,r.actividad].filter(Boolean).join(' '));
+        const tradicional = /evaluacion 1|tradicional|evaluacion1/.test(tipo);
+        let nota = Number(r.nota);
+        let porcentaje = Number(r.porcentaje);
+        const correctas = Number(r.correctas ?? 0);
+        const total = Number(r.total ?? 0);
+        if(!Number.isFinite(porcentaje) || porcentaje < 0) porcentaje = total > 0 ? Math.round(correctas/total*100) : 0;
+        if(!Number.isFinite(nota) || nota < 0) nota = tradicional ? porcentaje/20 : Number(r.puntos ?? 0);
+        // Evaluación tradicional se muestra en escala 0–5 en el panel de progreso.
+        if(tradicional && nota > 5) nota = nota/20;
+        if(!tradicional && nota > 5 && Number(r.puntos) <= 5) nota = Number(r.puntos);
+        const fechaRaw = r.fecha || r.fechaISO || '';
+        let ts = Date.parse(r.fechaISO || '');
+        if(!Number.isFinite(ts)) ts = Date.now();
+        propios.push({
+          id: ts,
+          firebaseId: doc.id,
+          fecha: fechaRaw || new Date(ts).toLocaleString('es-CO',{dateStyle:'short',timeStyle:'short'}),
+          categoria,
+          tema: r.tema || temas[categoria] || categoria,
+          tipo: tradicional ? 'evaluacion1' : 'actividad2',
+          evaluacion: tradicional ? 'Evaluación 1' : 'Evaluación 2',
+          correctas, total, porcentaje, nota,
+          puntos: Number(r.puntos ?? nota),
+          aprobada: porcentaje >= 60 || nota >= 3
+        });
+      });
+      if(!propios.length) return;
+      const data = window.obtenerProgresoGuardado() || {evaluaciones:[],errores:[]};
+      data.evaluaciones = Array.isArray(data.evaluaciones) ? data.evaluaciones : [];
+      const ids = new Set(data.evaluaciones.map(e => e && e.firebaseId).filter(Boolean));
+      const existentes = new Set(data.evaluaciones.map(e =>
+        [normalizar(e.categoria),normalizar(e.tipo),String(e.fecha||''),String(Number(e.nota||0))].join('|')
+      ));
+      let cambio = false;
+      propios.forEach(e => {
+        const clave = [normalizar(e.categoria),normalizar(e.tipo),String(e.fecha||''),String(Number(e.nota||0))].join('|');
+        if(ids.has(e.firebaseId) || existentes.has(clave)) return;
+        data.evaluaciones.push(e); ids.add(e.firebaseId); existentes.add(clave); cambio = true;
+      });
+      if(cambio){
+        data.evaluaciones.sort((a,b)=>Number(b.id||0)-Number(a.id||0));
+        data.evaluaciones = data.evaluaciones.slice(0,100);
+        window.guardarProgresoGuardado(data);
+      }
+    }catch(err){
+      console.error('No se pudieron sincronizar las notas de Firebase con Mi progreso:',err);
+    }
+  }
+  function instalar(){
+    const original = window.mostrarPanelProgreso;
+    if(typeof original !== 'function' || original.__sincronizaFirebase) return;
+    const nueva = async function(){
+      await sincronizar();
+      return original.apply(this, arguments);
+    };
+    nueva.__sincronizaFirebase = true;
+    window.mostrarPanelProgreso = nueva;
+  }
+  instalar();
+  document.addEventListener('DOMContentLoaded', instalar);
+})();
+</script>
+
+</body></html>`);
     w.document.close();
   }catch(e){console.error(e);alert('No se pudo generar el diploma.');}
 }
@@ -7013,7 +7144,138 @@ async function imprimirCertificado(meta){
     const w=window.open('','_blank');
     if(!w){alert('Permite las ventanas emergentes para imprimir.');return;}
     w.document.open();
-    w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Diploma - ${escapeForo(r.nombre)}</title><style>@page{size:A4 landscape;margin:10mm}html,body{margin:0;padding:0;width:100%;height:100%;background:#fff;overflow:hidden}body{display:flex;align-items:center;justify-content:center;box-sizing:border-box}img{display:block;width:auto;height:auto;max-width:100%;max-height:100%;object-fit:contain}</style></head><body><img src="${r.dataUrl}" alt="Diploma de ${escapeForo(r.nombre)}"><script>window.onload=()=>setTimeout(()=>window.print(),250);<\/script></body></html>`);
+    w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Diploma - ${escapeForo(r.nombre)}</title><style>@page{size:A4 landscape;margin:10mm}html,body{margin:0;padding:0;width:100%;height:100%;background:#fff;overflow:hidden}body{display:flex;align-items:center;justify-content:center;box-sizing:border-box}img{display:block;width:auto;height:auto;max-width:100%;max-height:100%;object-fit:contain}</style></head><body><img src="${r.dataUrl}" alt="Diploma de ${escapeForo(r.nombre)}"><script>window.onload=()=>setTimeout(()=>window.print(),250);<\/script>
+<script id="correccion-progreso-notas-firebase-2026">
+/* Sincroniza las evaluaciones ya guardadas en Firestore con el historial
+   que consulta "Mi progreso". No borra estudiantes ni resultados existentes. */
+(function(){
+  'use strict';
+  const COLL = 'resultados';
+  const normalizar = v => String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+
+  function nombreActivo(){
+    try {
+      if(typeof window.obtenerNombreEstudiante === 'function') return String(window.obtenerNombreEstudiante() || '').trim();
+      return String(localStorage.getItem('estudianteActivo') || '').trim();
+    } catch(e){ return ''; }
+  }
+  function obtenerDb(){
+    try {
+      if(window.db && typeof window.db.collection === 'function') return window.db;
+      if(typeof db !== 'undefined' && db && typeof db.collection === 'function') return db;
+    } catch(e){}
+    return null;
+  }
+  function categoriaDe(r, temas){
+    if(r.categoria && temas[r.categoria]) return r.categoria;
+    const posibles = [r.tema, r.actividad, r.categoria].filter(Boolean).map(normalizar);
+    for(const [clave, nombre] of Object.entries(temas)){
+      const n = normalizar(nombre);
+      if(posibles.some(x => x === n || x.includes(n) || n.includes(x))) return clave;
+    }
+    const aliases = {
+      'abecedario':'abecedario','alphabet':'abecedario',
+      'pronombres personales':'pronombres','personal pronouns':'pronombres',
+      'adjetivos posesivos':'adjetivosPosesivos','possessive adjectives':'adjetivosPosesivos',
+      'adjetivos descriptivos':'adjetivosDescriptivos','adjetivos de colores':'adjetivosColores',
+      'numeros':'numeros','numbers':'numeros','verbos regulares':'verbosRegulares',
+      'verbos irregulares':'verbosIrregulares','dias':'dias','months':'meses',
+      'meses':'meses','universo':'universo','universe':'universo',
+      'partes del cuerpo':'cuerpo','body parts':'cuerpo','saludos':'saludos','greetings':'saludos'
+    };
+    for(const x of posibles){
+      for(const [alias, clave] of Object.entries(aliases)){
+        if(x.includes(normalizar(alias)) && temas[clave]) return clave;
+      }
+    }
+    return '';
+  }
+  function esEvaluacion(r){
+    const t = normalizar([r.tipo,r.evaluacion,r.actividad].filter(Boolean).join(' '));
+    if(/practica|practice|foro|comentario|formulario/.test(t)) return false;
+    return /evaluacion|assessment|actividad interactiva/.test(t) ||
+      (r.nota !== undefined && r.porcentaje !== undefined && r.correctas !== undefined);
+  }
+  async function sincronizar(){
+    const nombre = nombreActivo();
+    const d = obtenerDb();
+    if(!nombre || !d || typeof window.obtenerProgresoGuardado !== 'function' ||
+       typeof window.guardarProgresoGuardado !== 'function') return;
+    try{
+      const snap = await d.collection(COLL).get();
+      const temas = (typeof nombresTemas === 'object' && nombresTemas) ? nombresTemas : {};
+      const propios = [];
+      snap.forEach(doc => {
+        const r = doc.data() || {};
+        const nombres = [r.estudiante, r.nombre, r.nombreEstudiante].filter(Boolean).map(normalizar);
+        if(!nombres.includes(normalizar(nombre)) || !esEvaluacion(r)) return;
+        const categoria = categoriaDe(r, temas);
+        if(!categoria) return;
+        const tipo = normalizar([r.tipo,r.evaluacion,r.actividad].filter(Boolean).join(' '));
+        const tradicional = /evaluacion 1|tradicional|evaluacion1/.test(tipo);
+        let nota = Number(r.nota);
+        let porcentaje = Number(r.porcentaje);
+        const correctas = Number(r.correctas ?? 0);
+        const total = Number(r.total ?? 0);
+        if(!Number.isFinite(porcentaje) || porcentaje < 0) porcentaje = total > 0 ? Math.round(correctas/total*100) : 0;
+        if(!Number.isFinite(nota) || nota < 0) nota = tradicional ? porcentaje/20 : Number(r.puntos ?? 0);
+        // Evaluación tradicional se muestra en escala 0–5 en el panel de progreso.
+        if(tradicional && nota > 5) nota = nota/20;
+        if(!tradicional && nota > 5 && Number(r.puntos) <= 5) nota = Number(r.puntos);
+        const fechaRaw = r.fecha || r.fechaISO || '';
+        let ts = Date.parse(r.fechaISO || '');
+        if(!Number.isFinite(ts)) ts = Date.now();
+        propios.push({
+          id: ts,
+          firebaseId: doc.id,
+          fecha: fechaRaw || new Date(ts).toLocaleString('es-CO',{dateStyle:'short',timeStyle:'short'}),
+          categoria,
+          tema: r.tema || temas[categoria] || categoria,
+          tipo: tradicional ? 'evaluacion1' : 'actividad2',
+          evaluacion: tradicional ? 'Evaluación 1' : 'Evaluación 2',
+          correctas, total, porcentaje, nota,
+          puntos: Number(r.puntos ?? nota),
+          aprobada: porcentaje >= 60 || nota >= 3
+        });
+      });
+      if(!propios.length) return;
+      const data = window.obtenerProgresoGuardado() || {evaluaciones:[],errores:[]};
+      data.evaluaciones = Array.isArray(data.evaluaciones) ? data.evaluaciones : [];
+      const ids = new Set(data.evaluaciones.map(e => e && e.firebaseId).filter(Boolean));
+      const existentes = new Set(data.evaluaciones.map(e =>
+        [normalizar(e.categoria),normalizar(e.tipo),String(e.fecha||''),String(Number(e.nota||0))].join('|')
+      ));
+      let cambio = false;
+      propios.forEach(e => {
+        const clave = [normalizar(e.categoria),normalizar(e.tipo),String(e.fecha||''),String(Number(e.nota||0))].join('|');
+        if(ids.has(e.firebaseId) || existentes.has(clave)) return;
+        data.evaluaciones.push(e); ids.add(e.firebaseId); existentes.add(clave); cambio = true;
+      });
+      if(cambio){
+        data.evaluaciones.sort((a,b)=>Number(b.id||0)-Number(a.id||0));
+        data.evaluaciones = data.evaluaciones.slice(0,100);
+        window.guardarProgresoGuardado(data);
+      }
+    }catch(err){
+      console.error('No se pudieron sincronizar las notas de Firebase con Mi progreso:',err);
+    }
+  }
+  function instalar(){
+    const original = window.mostrarPanelProgreso;
+    if(typeof original !== 'function' || original.__sincronizaFirebase) return;
+    const nueva = async function(){
+      await sincronizar();
+      return original.apply(this, arguments);
+    };
+    nueva.__sincronizaFirebase = true;
+    window.mostrarPanelProgreso = nueva;
+  }
+  instalar();
+  document.addEventListener('DOMContentLoaded', instalar);
+})();
+</script>
+
+</body></html>`);
     w.document.close();
   }catch(e){console.error(e);alert('No se pudo preparar la impresión.');}
 }
@@ -7695,7 +7957,138 @@ document.addEventListener('DOMContentLoaded', function(){
       <div class="nombre">${safe(nombre)}</div><div class="puntos">${d.meta} puntos</div>
       <div class="frase">${safe(d.frase)}</div><img class="firma-docente" src="data:image/webp;base64,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" alt="Firma del docente"><div class="doc">Docente: MILHTON EDWIN PERAFAN</div><div class="fecha">Fecha de obtención: ${safe(fecha)}</div>
       <button class="btn-regresar-diplomas" type="button" onclick="window.close()">← Regresar a mis diplomas</button>
-    </div></body></html>`;
+    </div>
+<script id="correccion-progreso-notas-firebase-2026">
+/* Sincroniza las evaluaciones ya guardadas en Firestore con el historial
+   que consulta "Mi progreso". No borra estudiantes ni resultados existentes. */
+(function(){
+  'use strict';
+  const COLL = 'resultados';
+  const normalizar = v => String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+
+  function nombreActivo(){
+    try {
+      if(typeof window.obtenerNombreEstudiante === 'function') return String(window.obtenerNombreEstudiante() || '').trim();
+      return String(localStorage.getItem('estudianteActivo') || '').trim();
+    } catch(e){ return ''; }
+  }
+  function obtenerDb(){
+    try {
+      if(window.db && typeof window.db.collection === 'function') return window.db;
+      if(typeof db !== 'undefined' && db && typeof db.collection === 'function') return db;
+    } catch(e){}
+    return null;
+  }
+  function categoriaDe(r, temas){
+    if(r.categoria && temas[r.categoria]) return r.categoria;
+    const posibles = [r.tema, r.actividad, r.categoria].filter(Boolean).map(normalizar);
+    for(const [clave, nombre] of Object.entries(temas)){
+      const n = normalizar(nombre);
+      if(posibles.some(x => x === n || x.includes(n) || n.includes(x))) return clave;
+    }
+    const aliases = {
+      'abecedario':'abecedario','alphabet':'abecedario',
+      'pronombres personales':'pronombres','personal pronouns':'pronombres',
+      'adjetivos posesivos':'adjetivosPosesivos','possessive adjectives':'adjetivosPosesivos',
+      'adjetivos descriptivos':'adjetivosDescriptivos','adjetivos de colores':'adjetivosColores',
+      'numeros':'numeros','numbers':'numeros','verbos regulares':'verbosRegulares',
+      'verbos irregulares':'verbosIrregulares','dias':'dias','months':'meses',
+      'meses':'meses','universo':'universo','universe':'universo',
+      'partes del cuerpo':'cuerpo','body parts':'cuerpo','saludos':'saludos','greetings':'saludos'
+    };
+    for(const x of posibles){
+      for(const [alias, clave] of Object.entries(aliases)){
+        if(x.includes(normalizar(alias)) && temas[clave]) return clave;
+      }
+    }
+    return '';
+  }
+  function esEvaluacion(r){
+    const t = normalizar([r.tipo,r.evaluacion,r.actividad].filter(Boolean).join(' '));
+    if(/practica|practice|foro|comentario|formulario/.test(t)) return false;
+    return /evaluacion|assessment|actividad interactiva/.test(t) ||
+      (r.nota !== undefined && r.porcentaje !== undefined && r.correctas !== undefined);
+  }
+  async function sincronizar(){
+    const nombre = nombreActivo();
+    const d = obtenerDb();
+    if(!nombre || !d || typeof window.obtenerProgresoGuardado !== 'function' ||
+       typeof window.guardarProgresoGuardado !== 'function') return;
+    try{
+      const snap = await d.collection(COLL).get();
+      const temas = (typeof nombresTemas === 'object' && nombresTemas) ? nombresTemas : {};
+      const propios = [];
+      snap.forEach(doc => {
+        const r = doc.data() || {};
+        const nombres = [r.estudiante, r.nombre, r.nombreEstudiante].filter(Boolean).map(normalizar);
+        if(!nombres.includes(normalizar(nombre)) || !esEvaluacion(r)) return;
+        const categoria = categoriaDe(r, temas);
+        if(!categoria) return;
+        const tipo = normalizar([r.tipo,r.evaluacion,r.actividad].filter(Boolean).join(' '));
+        const tradicional = /evaluacion 1|tradicional|evaluacion1/.test(tipo);
+        let nota = Number(r.nota);
+        let porcentaje = Number(r.porcentaje);
+        const correctas = Number(r.correctas ?? 0);
+        const total = Number(r.total ?? 0);
+        if(!Number.isFinite(porcentaje) || porcentaje < 0) porcentaje = total > 0 ? Math.round(correctas/total*100) : 0;
+        if(!Number.isFinite(nota) || nota < 0) nota = tradicional ? porcentaje/20 : Number(r.puntos ?? 0);
+        // Evaluación tradicional se muestra en escala 0–5 en el panel de progreso.
+        if(tradicional && nota > 5) nota = nota/20;
+        if(!tradicional && nota > 5 && Number(r.puntos) <= 5) nota = Number(r.puntos);
+        const fechaRaw = r.fecha || r.fechaISO || '';
+        let ts = Date.parse(r.fechaISO || '');
+        if(!Number.isFinite(ts)) ts = Date.now();
+        propios.push({
+          id: ts,
+          firebaseId: doc.id,
+          fecha: fechaRaw || new Date(ts).toLocaleString('es-CO',{dateStyle:'short',timeStyle:'short'}),
+          categoria,
+          tema: r.tema || temas[categoria] || categoria,
+          tipo: tradicional ? 'evaluacion1' : 'actividad2',
+          evaluacion: tradicional ? 'Evaluación 1' : 'Evaluación 2',
+          correctas, total, porcentaje, nota,
+          puntos: Number(r.puntos ?? nota),
+          aprobada: porcentaje >= 60 || nota >= 3
+        });
+      });
+      if(!propios.length) return;
+      const data = window.obtenerProgresoGuardado() || {evaluaciones:[],errores:[]};
+      data.evaluaciones = Array.isArray(data.evaluaciones) ? data.evaluaciones : [];
+      const ids = new Set(data.evaluaciones.map(e => e && e.firebaseId).filter(Boolean));
+      const existentes = new Set(data.evaluaciones.map(e =>
+        [normalizar(e.categoria),normalizar(e.tipo),String(e.fecha||''),String(Number(e.nota||0))].join('|')
+      ));
+      let cambio = false;
+      propios.forEach(e => {
+        const clave = [normalizar(e.categoria),normalizar(e.tipo),String(e.fecha||''),String(Number(e.nota||0))].join('|');
+        if(ids.has(e.firebaseId) || existentes.has(clave)) return;
+        data.evaluaciones.push(e); ids.add(e.firebaseId); existentes.add(clave); cambio = true;
+      });
+      if(cambio){
+        data.evaluaciones.sort((a,b)=>Number(b.id||0)-Number(a.id||0));
+        data.evaluaciones = data.evaluaciones.slice(0,100);
+        window.guardarProgresoGuardado(data);
+      }
+    }catch(err){
+      console.error('No se pudieron sincronizar las notas de Firebase con Mi progreso:',err);
+    }
+  }
+  function instalar(){
+    const original = window.mostrarPanelProgreso;
+    if(typeof original !== 'function' || original.__sincronizaFirebase) return;
+    const nueva = async function(){
+      await sincronizar();
+      return original.apply(this, arguments);
+    };
+    nueva.__sincronizaFirebase = true;
+    window.mostrarPanelProgreso = nueva;
+  }
+  instalar();
+  document.addEventListener('DOMContentLoaded', instalar);
+})();
+</script>
+
+</body></html>`;
   };
 
   // Puntos separados: actividades interactivas/Educaplay.
@@ -7738,7 +8131,138 @@ document.addEventListener('DOMContentLoaded', function(){
   window.descargarDiplomaActividad=function(meta){const x=datosDiplomaActividad(meta);if(!x){alert('🔒 Este diploma todavía está bloqueado.');return;}const blob=new Blob([diplomaActividadHTML(x)],{type:'text/html;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Diploma_Actividad_${meta}_${x.nombre.replace(/[^a-z0-9áéíóúñ]+/gi,'_')}.html`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
   function diplomaActividadHTML(x){return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Diploma de actividades</title><style>body{margin:0;padding:30px;background:#f1f6fa;font-family:Arial}.cert{max-width:850px;margin:auto;padding:40px;text-align:center;border:12px solid #d4af37;border-radius:12px;background:#fffdf4}.foto{width:150px;height:150px;object-fit:cover;border-radius:50%;border:5px solid #d4af37}.titulo{font:700 40px Georgia;color:#173f73}.nombre{font-size:42px;font-weight:900;color:#173f73;margin:20px}.puntos{font-size:28px;font-weight:900}@media print{body{padding:0}}
   .planeta-adivinanza{max-width:850px;margin:0 auto;padding:10px 0 4px}.planeta-imagen-wrap{display:flex;justify-content:center;align-items:center;min-height:250px;background:radial-gradient(circle,rgba(75,85,99,.18),rgba(17,24,39,.04));border-radius:22px;margin:8px 0 18px;overflow:hidden}.planeta-ilustrado{width:190px;height:190px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:4.5rem;box-shadow:0 18px 40px rgba(0,0,0,.25),inset -28px -24px 38px rgba(0,0,0,.28);position:relative}.planeta-ilustrado:after{content:'';position:absolute;inset:8px;border-radius:50%;border:2px solid rgba(255,255,255,.18)}.planeta-ilustrado.mercurio{background:radial-gradient(circle at 35% 30%,#d7d7d7,#8b8b8b 52%,#4f4f4f)}.planeta-ilustrado.venus{background:radial-gradient(circle at 35% 30%,#ffe3a3,#d39a45 55%,#87551f)}.planeta-ilustrado.tierra{background:radial-gradient(circle at 35% 30%,#79d6ff,#2787c9 48%,#16456e)}.planeta-ilustrado.marte{background:radial-gradient(circle at 35% 30%,#ff9a69,#c84b32 50%,#76251d)}.planeta-ilustrado.jupiter{background:repeating-linear-gradient(0deg,#a96d45 0 15px,#e9c79b 15px 29px,#8d5438 29px 40px);}.planeta-ilustrado.saturno{background:radial-gradient(circle at 35% 30%,#f4d99b,#b98a4d 55%,#6e4c2b)}.planeta-ilustrado.saturno:before{content:'';position:absolute;width:285px;height:78px;border:12px solid rgba(221,193,143,.8);border-radius:50%;transform:rotate(-18deg)}.planeta-ilustrado.urano{background:radial-gradient(circle at 35% 30%,#b8f2f4,#62b9c2 55%,#38747c)}.planeta-ilustrado.neptuno{background:radial-gradient(circle at 35% 30%,#8db9ff,#416fc5 55%,#233d82)}.planeta-opciones{justify-content:center}.planeta-opciones button{min-width:150px}
-</style></head><body><div class="cert"><div style="font-size:80px">🎮🏆</div><div class="titulo">${safe(x.d.titulo)}</div>${x.foto?`<img class="foto" src="${safe(x.foto)}">`:''}<div class="nombre">${safe(x.nombre)}</div><div class="puntos">${x.p} puntos de actividades</div><p>${safe(x.d.frase)}</p><p><strong>Docente: MILHTON EDWIN PERAFAN</strong></p><p>${safe(x.fecha)}</p><button type="button" class="volver-diploma" onclick="window.close();">← Regresar a mis diplomas</button></div></body></html>`;}
+</style></head><body><div class="cert"><div style="font-size:80px">🎮🏆</div><div class="titulo">${safe(x.d.titulo)}</div>${x.foto?`<img class="foto" src="${safe(x.foto)}">`:''}<div class="nombre">${safe(x.nombre)}</div><div class="puntos">${x.p} puntos de actividades</div><p>${safe(x.d.frase)}</p><p><strong>Docente: MILHTON EDWIN PERAFAN</strong></p><p>${safe(x.fecha)}</p><button type="button" class="volver-diploma" onclick="window.close();">← Regresar a mis diplomas</button></div>
+<script id="correccion-progreso-notas-firebase-2026">
+/* Sincroniza las evaluaciones ya guardadas en Firestore con el historial
+   que consulta "Mi progreso". No borra estudiantes ni resultados existentes. */
+(function(){
+  'use strict';
+  const COLL = 'resultados';
+  const normalizar = v => String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+
+  function nombreActivo(){
+    try {
+      if(typeof window.obtenerNombreEstudiante === 'function') return String(window.obtenerNombreEstudiante() || '').trim();
+      return String(localStorage.getItem('estudianteActivo') || '').trim();
+    } catch(e){ return ''; }
+  }
+  function obtenerDb(){
+    try {
+      if(window.db && typeof window.db.collection === 'function') return window.db;
+      if(typeof db !== 'undefined' && db && typeof db.collection === 'function') return db;
+    } catch(e){}
+    return null;
+  }
+  function categoriaDe(r, temas){
+    if(r.categoria && temas[r.categoria]) return r.categoria;
+    const posibles = [r.tema, r.actividad, r.categoria].filter(Boolean).map(normalizar);
+    for(const [clave, nombre] of Object.entries(temas)){
+      const n = normalizar(nombre);
+      if(posibles.some(x => x === n || x.includes(n) || n.includes(x))) return clave;
+    }
+    const aliases = {
+      'abecedario':'abecedario','alphabet':'abecedario',
+      'pronombres personales':'pronombres','personal pronouns':'pronombres',
+      'adjetivos posesivos':'adjetivosPosesivos','possessive adjectives':'adjetivosPosesivos',
+      'adjetivos descriptivos':'adjetivosDescriptivos','adjetivos de colores':'adjetivosColores',
+      'numeros':'numeros','numbers':'numeros','verbos regulares':'verbosRegulares',
+      'verbos irregulares':'verbosIrregulares','dias':'dias','months':'meses',
+      'meses':'meses','universo':'universo','universe':'universo',
+      'partes del cuerpo':'cuerpo','body parts':'cuerpo','saludos':'saludos','greetings':'saludos'
+    };
+    for(const x of posibles){
+      for(const [alias, clave] of Object.entries(aliases)){
+        if(x.includes(normalizar(alias)) && temas[clave]) return clave;
+      }
+    }
+    return '';
+  }
+  function esEvaluacion(r){
+    const t = normalizar([r.tipo,r.evaluacion,r.actividad].filter(Boolean).join(' '));
+    if(/practica|practice|foro|comentario|formulario/.test(t)) return false;
+    return /evaluacion|assessment|actividad interactiva/.test(t) ||
+      (r.nota !== undefined && r.porcentaje !== undefined && r.correctas !== undefined);
+  }
+  async function sincronizar(){
+    const nombre = nombreActivo();
+    const d = obtenerDb();
+    if(!nombre || !d || typeof window.obtenerProgresoGuardado !== 'function' ||
+       typeof window.guardarProgresoGuardado !== 'function') return;
+    try{
+      const snap = await d.collection(COLL).get();
+      const temas = (typeof nombresTemas === 'object' && nombresTemas) ? nombresTemas : {};
+      const propios = [];
+      snap.forEach(doc => {
+        const r = doc.data() || {};
+        const nombres = [r.estudiante, r.nombre, r.nombreEstudiante].filter(Boolean).map(normalizar);
+        if(!nombres.includes(normalizar(nombre)) || !esEvaluacion(r)) return;
+        const categoria = categoriaDe(r, temas);
+        if(!categoria) return;
+        const tipo = normalizar([r.tipo,r.evaluacion,r.actividad].filter(Boolean).join(' '));
+        const tradicional = /evaluacion 1|tradicional|evaluacion1/.test(tipo);
+        let nota = Number(r.nota);
+        let porcentaje = Number(r.porcentaje);
+        const correctas = Number(r.correctas ?? 0);
+        const total = Number(r.total ?? 0);
+        if(!Number.isFinite(porcentaje) || porcentaje < 0) porcentaje = total > 0 ? Math.round(correctas/total*100) : 0;
+        if(!Number.isFinite(nota) || nota < 0) nota = tradicional ? porcentaje/20 : Number(r.puntos ?? 0);
+        // Evaluación tradicional se muestra en escala 0–5 en el panel de progreso.
+        if(tradicional && nota > 5) nota = nota/20;
+        if(!tradicional && nota > 5 && Number(r.puntos) <= 5) nota = Number(r.puntos);
+        const fechaRaw = r.fecha || r.fechaISO || '';
+        let ts = Date.parse(r.fechaISO || '');
+        if(!Number.isFinite(ts)) ts = Date.now();
+        propios.push({
+          id: ts,
+          firebaseId: doc.id,
+          fecha: fechaRaw || new Date(ts).toLocaleString('es-CO',{dateStyle:'short',timeStyle:'short'}),
+          categoria,
+          tema: r.tema || temas[categoria] || categoria,
+          tipo: tradicional ? 'evaluacion1' : 'actividad2',
+          evaluacion: tradicional ? 'Evaluación 1' : 'Evaluación 2',
+          correctas, total, porcentaje, nota,
+          puntos: Number(r.puntos ?? nota),
+          aprobada: porcentaje >= 60 || nota >= 3
+        });
+      });
+      if(!propios.length) return;
+      const data = window.obtenerProgresoGuardado() || {evaluaciones:[],errores:[]};
+      data.evaluaciones = Array.isArray(data.evaluaciones) ? data.evaluaciones : [];
+      const ids = new Set(data.evaluaciones.map(e => e && e.firebaseId).filter(Boolean));
+      const existentes = new Set(data.evaluaciones.map(e =>
+        [normalizar(e.categoria),normalizar(e.tipo),String(e.fecha||''),String(Number(e.nota||0))].join('|')
+      ));
+      let cambio = false;
+      propios.forEach(e => {
+        const clave = [normalizar(e.categoria),normalizar(e.tipo),String(e.fecha||''),String(Number(e.nota||0))].join('|');
+        if(ids.has(e.firebaseId) || existentes.has(clave)) return;
+        data.evaluaciones.push(e); ids.add(e.firebaseId); existentes.add(clave); cambio = true;
+      });
+      if(cambio){
+        data.evaluaciones.sort((a,b)=>Number(b.id||0)-Number(a.id||0));
+        data.evaluaciones = data.evaluaciones.slice(0,100);
+        window.guardarProgresoGuardado(data);
+      }
+    }catch(err){
+      console.error('No se pudieron sincronizar las notas de Firebase con Mi progreso:',err);
+    }
+  }
+  function instalar(){
+    const original = window.mostrarPanelProgreso;
+    if(typeof original !== 'function' || original.__sincronizaFirebase) return;
+    const nueva = async function(){
+      await sincronizar();
+      return original.apply(this, arguments);
+    };
+    nueva.__sincronizaFirebase = true;
+    window.mostrarPanelProgreso = nueva;
+  }
+  instalar();
+  document.addEventListener('DOMContentLoaded', instalar);
+})();
+</script>
+
+</body></html>`;}
 
   // Reemplaza la representación de diplomas para mostrar también la categoría especial.
   /* Los diplomas de actividades no se muestran dentro de 'Mis diplomas'.
@@ -10783,7 +11307,138 @@ function volverEspacioEstudianteReal(){
   }
   window.__chatOverride20260928=true;
 })();
-</script>\n</body>
+</script>\n
+<script id="correccion-progreso-notas-firebase-2026">
+/* Sincroniza las evaluaciones ya guardadas en Firestore con el historial
+   que consulta "Mi progreso". No borra estudiantes ni resultados existentes. */
+(function(){
+  'use strict';
+  const COLL = 'resultados';
+  const normalizar = v => String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+
+  function nombreActivo(){
+    try {
+      if(typeof window.obtenerNombreEstudiante === 'function') return String(window.obtenerNombreEstudiante() || '').trim();
+      return String(localStorage.getItem('estudianteActivo') || '').trim();
+    } catch(e){ return ''; }
+  }
+  function obtenerDb(){
+    try {
+      if(window.db && typeof window.db.collection === 'function') return window.db;
+      if(typeof db !== 'undefined' && db && typeof db.collection === 'function') return db;
+    } catch(e){}
+    return null;
+  }
+  function categoriaDe(r, temas){
+    if(r.categoria && temas[r.categoria]) return r.categoria;
+    const posibles = [r.tema, r.actividad, r.categoria].filter(Boolean).map(normalizar);
+    for(const [clave, nombre] of Object.entries(temas)){
+      const n = normalizar(nombre);
+      if(posibles.some(x => x === n || x.includes(n) || n.includes(x))) return clave;
+    }
+    const aliases = {
+      'abecedario':'abecedario','alphabet':'abecedario',
+      'pronombres personales':'pronombres','personal pronouns':'pronombres',
+      'adjetivos posesivos':'adjetivosPosesivos','possessive adjectives':'adjetivosPosesivos',
+      'adjetivos descriptivos':'adjetivosDescriptivos','adjetivos de colores':'adjetivosColores',
+      'numeros':'numeros','numbers':'numeros','verbos regulares':'verbosRegulares',
+      'verbos irregulares':'verbosIrregulares','dias':'dias','months':'meses',
+      'meses':'meses','universo':'universo','universe':'universo',
+      'partes del cuerpo':'cuerpo','body parts':'cuerpo','saludos':'saludos','greetings':'saludos'
+    };
+    for(const x of posibles){
+      for(const [alias, clave] of Object.entries(aliases)){
+        if(x.includes(normalizar(alias)) && temas[clave]) return clave;
+      }
+    }
+    return '';
+  }
+  function esEvaluacion(r){
+    const t = normalizar([r.tipo,r.evaluacion,r.actividad].filter(Boolean).join(' '));
+    if(/practica|practice|foro|comentario|formulario/.test(t)) return false;
+    return /evaluacion|assessment|actividad interactiva/.test(t) ||
+      (r.nota !== undefined && r.porcentaje !== undefined && r.correctas !== undefined);
+  }
+  async function sincronizar(){
+    const nombre = nombreActivo();
+    const d = obtenerDb();
+    if(!nombre || !d || typeof window.obtenerProgresoGuardado !== 'function' ||
+       typeof window.guardarProgresoGuardado !== 'function') return;
+    try{
+      const snap = await d.collection(COLL).get();
+      const temas = (typeof nombresTemas === 'object' && nombresTemas) ? nombresTemas : {};
+      const propios = [];
+      snap.forEach(doc => {
+        const r = doc.data() || {};
+        const nombres = [r.estudiante, r.nombre, r.nombreEstudiante].filter(Boolean).map(normalizar);
+        if(!nombres.includes(normalizar(nombre)) || !esEvaluacion(r)) return;
+        const categoria = categoriaDe(r, temas);
+        if(!categoria) return;
+        const tipo = normalizar([r.tipo,r.evaluacion,r.actividad].filter(Boolean).join(' '));
+        const tradicional = /evaluacion 1|tradicional|evaluacion1/.test(tipo);
+        let nota = Number(r.nota);
+        let porcentaje = Number(r.porcentaje);
+        const correctas = Number(r.correctas ?? 0);
+        const total = Number(r.total ?? 0);
+        if(!Number.isFinite(porcentaje) || porcentaje < 0) porcentaje = total > 0 ? Math.round(correctas/total*100) : 0;
+        if(!Number.isFinite(nota) || nota < 0) nota = tradicional ? porcentaje/20 : Number(r.puntos ?? 0);
+        // Evaluación tradicional se muestra en escala 0–5 en el panel de progreso.
+        if(tradicional && nota > 5) nota = nota/20;
+        if(!tradicional && nota > 5 && Number(r.puntos) <= 5) nota = Number(r.puntos);
+        const fechaRaw = r.fecha || r.fechaISO || '';
+        let ts = Date.parse(r.fechaISO || '');
+        if(!Number.isFinite(ts)) ts = Date.now();
+        propios.push({
+          id: ts,
+          firebaseId: doc.id,
+          fecha: fechaRaw || new Date(ts).toLocaleString('es-CO',{dateStyle:'short',timeStyle:'short'}),
+          categoria,
+          tema: r.tema || temas[categoria] || categoria,
+          tipo: tradicional ? 'evaluacion1' : 'actividad2',
+          evaluacion: tradicional ? 'Evaluación 1' : 'Evaluación 2',
+          correctas, total, porcentaje, nota,
+          puntos: Number(r.puntos ?? nota),
+          aprobada: porcentaje >= 60 || nota >= 3
+        });
+      });
+      if(!propios.length) return;
+      const data = window.obtenerProgresoGuardado() || {evaluaciones:[],errores:[]};
+      data.evaluaciones = Array.isArray(data.evaluaciones) ? data.evaluaciones : [];
+      const ids = new Set(data.evaluaciones.map(e => e && e.firebaseId).filter(Boolean));
+      const existentes = new Set(data.evaluaciones.map(e =>
+        [normalizar(e.categoria),normalizar(e.tipo),String(e.fecha||''),String(Number(e.nota||0))].join('|')
+      ));
+      let cambio = false;
+      propios.forEach(e => {
+        const clave = [normalizar(e.categoria),normalizar(e.tipo),String(e.fecha||''),String(Number(e.nota||0))].join('|');
+        if(ids.has(e.firebaseId) || existentes.has(clave)) return;
+        data.evaluaciones.push(e); ids.add(e.firebaseId); existentes.add(clave); cambio = true;
+      });
+      if(cambio){
+        data.evaluaciones.sort((a,b)=>Number(b.id||0)-Number(a.id||0));
+        data.evaluaciones = data.evaluaciones.slice(0,100);
+        window.guardarProgresoGuardado(data);
+      }
+    }catch(err){
+      console.error('No se pudieron sincronizar las notas de Firebase con Mi progreso:',err);
+    }
+  }
+  function instalar(){
+    const original = window.mostrarPanelProgreso;
+    if(typeof original !== 'function' || original.__sincronizaFirebase) return;
+    const nueva = async function(){
+      await sincronizar();
+      return original.apply(this, arguments);
+    };
+    nueva.__sincronizaFirebase = true;
+    window.mostrarPanelProgreso = nueva;
+  }
+  instalar();
+  document.addEventListener('DOMContentLoaded', instalar);
+})();
+</script>
+
+</body>
 \n<style id="FIX-ESTUDIANTE-VISIBLE-2026">
 /* Corrección final: el acceso Estudiante debe quedar siempre visible al pulsar el botón. */
 .zona-estudiante.acceso-estudiante-visible-2026{
@@ -14306,5 +14961,136 @@ body.vista-chat-solo #btn-estudiante-superior,body.vista-chat-solo #estudiante-a
   if(document.body) observer.observe(document.body,{childList:true,subtree:true});
 })();
 </script>
+
+<script id="correccion-progreso-notas-firebase-2026">
+/* Sincroniza las evaluaciones ya guardadas en Firestore con el historial
+   que consulta "Mi progreso". No borra estudiantes ni resultados existentes. */
+(function(){
+  'use strict';
+  const COLL = 'resultados';
+  const normalizar = v => String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+
+  function nombreActivo(){
+    try {
+      if(typeof window.obtenerNombreEstudiante === 'function') return String(window.obtenerNombreEstudiante() || '').trim();
+      return String(localStorage.getItem('estudianteActivo') || '').trim();
+    } catch(e){ return ''; }
+  }
+  function obtenerDb(){
+    try {
+      if(window.db && typeof window.db.collection === 'function') return window.db;
+      if(typeof db !== 'undefined' && db && typeof db.collection === 'function') return db;
+    } catch(e){}
+    return null;
+  }
+  function categoriaDe(r, temas){
+    if(r.categoria && temas[r.categoria]) return r.categoria;
+    const posibles = [r.tema, r.actividad, r.categoria].filter(Boolean).map(normalizar);
+    for(const [clave, nombre] of Object.entries(temas)){
+      const n = normalizar(nombre);
+      if(posibles.some(x => x === n || x.includes(n) || n.includes(x))) return clave;
+    }
+    const aliases = {
+      'abecedario':'abecedario','alphabet':'abecedario',
+      'pronombres personales':'pronombres','personal pronouns':'pronombres',
+      'adjetivos posesivos':'adjetivosPosesivos','possessive adjectives':'adjetivosPosesivos',
+      'adjetivos descriptivos':'adjetivosDescriptivos','adjetivos de colores':'adjetivosColores',
+      'numeros':'numeros','numbers':'numeros','verbos regulares':'verbosRegulares',
+      'verbos irregulares':'verbosIrregulares','dias':'dias','months':'meses',
+      'meses':'meses','universo':'universo','universe':'universo',
+      'partes del cuerpo':'cuerpo','body parts':'cuerpo','saludos':'saludos','greetings':'saludos'
+    };
+    for(const x of posibles){
+      for(const [alias, clave] of Object.entries(aliases)){
+        if(x.includes(normalizar(alias)) && temas[clave]) return clave;
+      }
+    }
+    return '';
+  }
+  function esEvaluacion(r){
+    const t = normalizar([r.tipo,r.evaluacion,r.actividad].filter(Boolean).join(' '));
+    if(/practica|practice|foro|comentario|formulario/.test(t)) return false;
+    return /evaluacion|assessment|actividad interactiva/.test(t) ||
+      (r.nota !== undefined && r.porcentaje !== undefined && r.correctas !== undefined);
+  }
+  async function sincronizar(){
+    const nombre = nombreActivo();
+    const d = obtenerDb();
+    if(!nombre || !d || typeof window.obtenerProgresoGuardado !== 'function' ||
+       typeof window.guardarProgresoGuardado !== 'function') return;
+    try{
+      const snap = await d.collection(COLL).get();
+      const temas = (typeof nombresTemas === 'object' && nombresTemas) ? nombresTemas : {};
+      const propios = [];
+      snap.forEach(doc => {
+        const r = doc.data() || {};
+        const nombres = [r.estudiante, r.nombre, r.nombreEstudiante].filter(Boolean).map(normalizar);
+        if(!nombres.includes(normalizar(nombre)) || !esEvaluacion(r)) return;
+        const categoria = categoriaDe(r, temas);
+        if(!categoria) return;
+        const tipo = normalizar([r.tipo,r.evaluacion,r.actividad].filter(Boolean).join(' '));
+        const tradicional = /evaluacion 1|tradicional|evaluacion1/.test(tipo);
+        let nota = Number(r.nota);
+        let porcentaje = Number(r.porcentaje);
+        const correctas = Number(r.correctas ?? 0);
+        const total = Number(r.total ?? 0);
+        if(!Number.isFinite(porcentaje) || porcentaje < 0) porcentaje = total > 0 ? Math.round(correctas/total*100) : 0;
+        if(!Number.isFinite(nota) || nota < 0) nota = tradicional ? porcentaje/20 : Number(r.puntos ?? 0);
+        // Evaluación tradicional se muestra en escala 0–5 en el panel de progreso.
+        if(tradicional && nota > 5) nota = nota/20;
+        if(!tradicional && nota > 5 && Number(r.puntos) <= 5) nota = Number(r.puntos);
+        const fechaRaw = r.fecha || r.fechaISO || '';
+        let ts = Date.parse(r.fechaISO || '');
+        if(!Number.isFinite(ts)) ts = Date.now();
+        propios.push({
+          id: ts,
+          firebaseId: doc.id,
+          fecha: fechaRaw || new Date(ts).toLocaleString('es-CO',{dateStyle:'short',timeStyle:'short'}),
+          categoria,
+          tema: r.tema || temas[categoria] || categoria,
+          tipo: tradicional ? 'evaluacion1' : 'actividad2',
+          evaluacion: tradicional ? 'Evaluación 1' : 'Evaluación 2',
+          correctas, total, porcentaje, nota,
+          puntos: Number(r.puntos ?? nota),
+          aprobada: porcentaje >= 60 || nota >= 3
+        });
+      });
+      if(!propios.length) return;
+      const data = window.obtenerProgresoGuardado() || {evaluaciones:[],errores:[]};
+      data.evaluaciones = Array.isArray(data.evaluaciones) ? data.evaluaciones : [];
+      const ids = new Set(data.evaluaciones.map(e => e && e.firebaseId).filter(Boolean));
+      const existentes = new Set(data.evaluaciones.map(e =>
+        [normalizar(e.categoria),normalizar(e.tipo),String(e.fecha||''),String(Number(e.nota||0))].join('|')
+      ));
+      let cambio = false;
+      propios.forEach(e => {
+        const clave = [normalizar(e.categoria),normalizar(e.tipo),String(e.fecha||''),String(Number(e.nota||0))].join('|');
+        if(ids.has(e.firebaseId) || existentes.has(clave)) return;
+        data.evaluaciones.push(e); ids.add(e.firebaseId); existentes.add(clave); cambio = true;
+      });
+      if(cambio){
+        data.evaluaciones.sort((a,b)=>Number(b.id||0)-Number(a.id||0));
+        data.evaluaciones = data.evaluaciones.slice(0,100);
+        window.guardarProgresoGuardado(data);
+      }
+    }catch(err){
+      console.error('No se pudieron sincronizar las notas de Firebase con Mi progreso:',err);
+    }
+  }
+  function instalar(){
+    const original = window.mostrarPanelProgreso;
+    if(typeof original !== 'function' || original.__sincronizaFirebase) return;
+    const nueva = async function(){
+      await sincronizar();
+      return original.apply(this, arguments);
+    };
+    nueva.__sincronizaFirebase = true;
+    window.mostrarPanelProgreso = nueva;
+  }
+  instalar();
+  document.addEventListener('DOMContentLoaded', instalar);
+})();
+</script>
+
 </body>
 </html>
